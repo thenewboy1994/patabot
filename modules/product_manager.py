@@ -1,17 +1,17 @@
 """
 Product Manager — مدير المنتجات
 ================================
-- جلب المنتجات من BigBuy API (باستخدام taxonomies)
+- جلب المنتجات من BigBuy API
 - حساب هوامش الربح (30-50%)
-- تحديث المخزون والأسعار
 - معالجة الطلبات
 """
 
 import os
 import logging
+import asyncio
 import httpx
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 logger = logging.getLogger('PataBot.Products')
 
@@ -33,132 +33,123 @@ class ProductManager:
         }
 
     async def fetch_profitable_products(self) -> Dict:
-        """جلب المنتجات المربحة من BigBuy"""
+        """جلب المنتجات المربحة من BigBuy — طريقة بسيطة وآمنة"""
         logger.info("📦 Fetching profitable products from BigBuy...")
 
         if not BIGBUY_API_KEY:
-            logger.warning("⚠️ BigBuy API key not set. Using demo mode.")
+            logger.warning("⚠️ No API key. Demo mode.")
             return {"products": self._get_demo_products(), "source": "demo"}
 
         all_products = []
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                # Step 1: Get taxonomies
-                logger.info("📂 Fetching taxonomies...")
+
+                # Step 1: Get taxonomies list
+                logger.info("📂 Step 1: Getting taxonomies...")
                 tax_resp = await client.get(
                     f"{BIGBUY_API_URL}/catalog/taxonomies.json",
                     headers=self.headers
                 )
 
                 if tax_resp.status_code != 200:
-                    logger.error(f"❌ Taxonomies failed: {tax_resp.status_code} - {tax_resp.text[:300]}")
-                    return {"products": self._get_demo_products(), "source": "demo",
-                            "error": f"Taxonomy API: {tax_resp.status_code}", "detail": tax_resp.text[:300]}
+                    error_msg = f"Taxonomies: {tax_resp.status_code} - {tax_resp.text[:200]}"
+                    logger.error(f"❌ {error_msg}")
+                    return {"products": self._get_demo_products(), "source": "demo", "error": error_msg}
 
                 taxonomies = tax_resp.json()
                 logger.info(f"✅ Got {len(taxonomies)} taxonomies")
 
-                # Get unique parent taxonomy IDs
-                parent_ids = list(set(
-                    t.get('parentTaxonomy') for t in taxonomies
-                    if t.get('parentTaxonomy')
-                ))[:8]
+                # Step 2: Pick leaf taxonomies (those that ARE NOT parents)
+                all_tax_ids = set(t.get('id') for t in taxonomies if t.get('id'))
+                parent_ids = set(t.get('parentTaxonomy') for t in taxonomies if t.get('parentTaxonomy'))
+                leaf_ids = list(all_tax_ids - parent_ids)[:10]  # First 10 leaf categories
 
-                # Step 2: For each parent taxonomy, get products
-                for parent_id in parent_ids:
+                logger.info(f"📂 Step 2: Using {len(leaf_ids)} leaf taxonomies: {leaf_ids[:5]}...")
+
+                # Step 3: Get products for each leaf taxonomy (with delay to avoid rate limit)
+                for i, tax_id in enumerate(leaf_ids):
+                    logger.info(f"📦 Fetching taxonomy {tax_id} ({i+1}/{len(leaf_ids)})...")
+
+                    # Wait 2 seconds between requests to avoid 429
+                    if i > 0:
+                        await asyncio.sleep(2)
+
                     try:
-                        info_resp = await client.get(
+                        resp = await client.get(
                             f"{BIGBUY_API_URL}/catalog/productsinformation.json",
                             headers=self.headers,
-                            params={"isoCode": "es", "parentTaxonomy": parent_id, "pageSize": 20, "page": 1}
+                            params={
+                                "isoCode": "es",
+                                "parentTaxonomy": tax_id,
+                                "pageSize": 10,
+                                "page": 1
+                            }
                         )
 
-                        if info_resp.status_code == 200:
-                            products_info = info_resp.json()
-                            if not isinstance(products_info, list):
-                                continue
+                        if resp.status_code == 200:
+                            products_info = resp.json()
+                            if isinstance(products_info, list):
+                                logger.info(f"  ✅ Got {len(products_info)} products from taxonomy {tax_id}")
 
-                            for pinfo in products_info[:20]:
-                                pid = pinfo.get('id')
-                                if not pid:
-                                    continue
+                                for pinfo in products_info:
+                                    pid = pinfo.get('id')
+                                    if not pid:
+                                        continue
 
-                                try:
-                                    pr = await client.get(
-                                        f"{BIGBUY_API_URL}/catalog/productprice/{pid}.json",
-                                        headers=self.headers
-                                    )
-                                    if pr.status_code == 200:
-                                        pd = pr.json()
-                                        cost = pd.get('wholesalePrice', 0)
-                                        if cost and 5 <= cost <= 200:
-                                            images = []
-                                            try:
-                                                ir = await client.get(
-                                                    f"{BIGBUY_API_URL}/catalog/productimages/{pid}.json",
-                                                    headers=self.headers
+                                    # Wait before price request
+                                    await asyncio.sleep(1)
+
+                                    try:
+                                        pr = await client.get(
+                                            f"{BIGBUY_API_URL}/catalog/productprice/{pid}.json",
+                                            headers=self.headers
+                                        )
+                                        if pr.status_code == 200:
+                                            price_data = pr.json()
+                                            cost = price_data.get('wholesalePrice', 0)
+                                            if cost and 5 <= cost <= 200:
+                                                product = self._build_product(
+                                                    pid,
+                                                    pinfo.get('sku', ''),
+                                                    pinfo.get('name', 'Product'),
+                                                    pinfo.get('description', ''),
+                                                    cost, [], 10
                                                 )
-                                                if ir.status_code == 200:
-                                                    id_list = ir.json()
-                                                    if isinstance(id_list, list):
-                                                        images = [i.get('url','') for i in id_list[:5] if i.get('url')]
-                                            except:
-                                                pass
+                                                all_products.append(product)
+                                                logger.info(f"  💰 Added: {pinfo.get('name','')} — €{cost} → €{product['selling_price']}")
+                                        elif pr.status_code == 429:
+                                            logger.warning("⏳ Rate limited on price. Waiting 5s...")
+                                            await asyncio.sleep(5)
+                                    except Exception as e:
+                                        logger.debug(f"  Price error {pid}: {e}")
 
-                                            product = self._build_product(
-                                                pid, pinfo.get('sku',''),
-                                                pinfo.get('name','Product'),
-                                                pinfo.get('description',''),
-                                                cost, images, 10
-                                            )
-                                            all_products.append(product)
-                                except:
-                                    continue
-                    except Exception as e:
-                        logger.warning(f"⚠️ Taxonomy {parent_id} error: {e}")
-                        continue
-
-                # If still no products, try direct endpoint
-                if not all_products:
-                    logger.info("🔄 Trying direct products endpoint...")
-                    try:
-                        dr = await client.get(
-                            f"{BIGBUY_API_URL}/catalog/products.json",
-                            headers=self.headers,
-                            params={"pageSize": 50, "page": 1}
-                        )
-                        if dr.status_code == 200:
-                            direct = dr.json()
-                            logger.info(f"📦 Direct: {len(direct)} products")
-                            for p in direct[:30]:
-                                pid = p.get('id')
-                                sku = p.get('sku','')
-                                try:
-                                    pr2 = await client.get(
-                                        f"{BIGBUY_API_URL}/catalog/productprice/{pid}.json",
-                                        headers=self.headers
-                                    )
-                                    if pr2.status_code == 200:
-                                        cost = pr2.json().get('wholesalePrice', 0)
-                                        if cost and 5 <= cost <= 200:
-                                            all_products.append(self._build_product(
-                                                pid, sku, sku, "", cost, [], 10
-                                            ))
-                                except:
-                                    continue
+                        elif resp.status_code == 404:
+                            logger.info(f"  ⚠️ Taxonomy {tax_id}: no products (404)")
+                        elif resp.status_code == 429:
+                            logger.warning("⏳ Rate limited. Waiting 10s...")
+                            await asyncio.sleep(10)
                         else:
-                            logger.error(f"❌ Direct products: {dr.status_code} - {dr.text[:300]}")
-                    except Exception as e:
-                        logger.error(f"❌ Direct error: {e}")
+                            logger.warning(f"  ⚠️ Taxonomy {tax_id}: {resp.status_code}")
 
-            all_products.sort(key=lambda p: p['profit_margin'], reverse=True)
-            self.products = all_products[:100]
-            logger.info(f"✅ Total profitable products: {len(self.products)}")
-            return {"products": self.products, "count": len(self.products), "source": "bigbuy"}
+                    except Exception as e:
+                        logger.warning(f"  ❌ Error taxonomy {tax_id}: {e}")
+
+                # Sort by profit
+                all_products.sort(key=lambda p: p['profit'], reverse=True)
+                self.products = all_products[:100]
+
+                logger.info(f"✅ Total profitable products found: {len(self.products)}")
+
+                if not self.products:
+                    logger.info("📋 No products found from API. Returning demo products.")
+                    return {"products": self._get_demo_products(), "source": "demo",
+                            "note": "API connected but no products matched criteria. Check taxonomy IDs."}
+
+                return {"products": self.products, "count": len(self.products), "source": "bigbuy"}
 
         except Exception as e:
-            logger.error(f"❌ Fetch error: {e}")
+            logger.error(f"❌ Fatal error: {e}")
             return {"products": self._get_demo_products(), "source": "demo", "error": str(e)}
 
     def _build_product(self, product_id, sku, name, description, cost, images, stock) -> Dict:
@@ -183,8 +174,6 @@ class ProductManager:
 
     async def update_inventory_and_prices(self):
         logger.info("🔄 Updating inventory...")
-        if not BIGBUY_API_KEY or not self.products:
-            return
 
     async def remove_unavailable_products(self):
         before = len(self.products)
