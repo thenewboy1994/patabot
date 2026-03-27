@@ -1,8 +1,6 @@
 """
 Product Manager — مدير المنتجات
-================================
-Uses single BigBuy API calls to avoid rate limiting.
-GET /rest/catalog/products.json (pageSize up to 10000)
+Uses ONLY batch BigBuy API endpoints to avoid 400/429 errors.
 """
 
 import os
@@ -32,7 +30,7 @@ class ProductManager:
         }
 
     async def fetch_profitable_products(self) -> Dict:
-        logger.info("📦 Fetching products from BigBuy...")
+        logger.info("📦 Fetching products from BigBuy (batch mode)...")
 
         if not BIGBUY_API_KEY:
             return {"products": self._demo(), "source": "demo"}
@@ -40,112 +38,133 @@ class ProductManager:
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
 
-                # ONE call: get all products (basic info)
-                logger.info("📂 Getting product catalog...")
-                resp = await client.get(
+                # STEP 1: Get products catalog
+                logger.info("📂 Step 1: Getting catalog...")
+                r1 = await client.get(
                     f"{BIGBUY_API_URL}/catalog/products.json",
                     headers=self.headers,
-                    params={"pageSize": 200, "page": 1}
+                    params={"pageSize": 500, "page": 1}
                 )
 
-                if resp.status_code == 429:
-                    logger.warning("⏳ Rate limited. Waiting 30s and retrying...")
-                    await asyncio.sleep(30)
-                    resp = await client.get(
-                        f"{BIGBUY_API_URL}/catalog/products.json",
-                        headers=self.headers,
-                        params={"pageSize": 100, "page": 1}
-                    )
-
-                if resp.status_code != 200:
-                    err = f"Products API: {resp.status_code} - {resp.text[:300]}"
+                if r1.status_code != 200:
+                    err = f"Catalog: {r1.status_code} - {r1.text[:200]}"
                     logger.error(f"❌ {err}")
                     return {"products": self._demo(), "source": "demo", "error": err}
 
-                catalog = resp.json()
+                catalog = r1.json()
                 if not isinstance(catalog, list):
-                    logger.error(f"❌ Unexpected response type: {type(catalog)}")
                     return {"products": self._demo(), "source": "demo",
-                            "error": f"Response is {type(catalog)}, expected list",
-                            "sample": str(catalog)[:300]}
+                            "error": f"Catalog type: {type(catalog).__name__}"}
 
-                logger.info(f"✅ Got {len(catalog)} products from catalog")
+                logger.info(f"✅ Catalog: {len(catalog)} products")
 
-                # Now get prices in batch
-                await asyncio.sleep(3)
-                logger.info("💰 Getting product prices...")
-
-                prices_resp = await client.get(
-                    f"{BIGBUY_API_URL}/catalog/productsprices.json",
-                    headers=self.headers,
-                    params={"pageSize": 200, "page": 1}
-                )
-
-                prices_map = {}
-                if prices_resp.status_code == 200:
-                    prices_data = prices_resp.json()
-                    if isinstance(prices_data, list):
-                        for p in prices_data:
-                            pid = p.get('id') or p.get('productId')
-                            wp = p.get('wholesalePrice', 0)
-                            if pid and wp:
-                                prices_map[pid] = wp
-                        logger.info(f"✅ Got prices for {len(prices_map)} products")
-                    else:
-                        logger.warning(f"⚠️ Prices response type: {type(prices_data)}")
-                elif prices_resp.status_code == 429:
-                    logger.warning("⏳ Rate limited on prices. Will use individual pricing.")
-                else:
-                    logger.warning(f"⚠️ Prices API: {prices_resp.status_code}")
-
-                # Build product list
-                all_products = []
+                # Build catalog map by ID
+                catalog_map = {}
                 for item in catalog:
                     pid = item.get('id')
-                    sku = item.get('sku', '')
-                    name = item.get('name', sku)
-                    stock = item.get('inShopsQuantity', 0)
+                    if pid:
+                        catalog_map[pid] = item
 
-                    if not pid:
+                # STEP 2: Get ALL prices in batch
+                await asyncio.sleep(3)
+                logger.info("💰 Step 2: Getting batch prices...")
+
+                prices_map = {}
+                page = 1
+                while page <= 3:
+                    r2 = await client.get(
+                        f"{BIGBUY_API_URL}/catalog/productsprices.json",
+                        headers=self.headers,
+                        params={"pageSize": 500, "page": page}
+                    )
+
+                    if r2.status_code == 200:
+                        pdata = r2.json()
+                        if isinstance(pdata, list) and pdata:
+                            for p in pdata:
+                                pid = p.get('id') or p.get('productId')
+                                wp = p.get('wholesalePrice', 0)
+                                if pid and wp and wp > 0:
+                                    prices_map[pid] = wp
+                            logger.info(f"  Page {page}: {len(pdata)} prices")
+                            page += 1
+                            await asyncio.sleep(2)
+                        else:
+                            break
+                    elif r2.status_code == 429:
+                        logger.warning("⏳ Rate limited on prices. Waiting 15s...")
+                        await asyncio.sleep(15)
+                    else:
+                        logger.warning(f"⚠️ Prices page {page}: {r2.status_code} - {r2.text[:200]}")
+                        break
+
+                logger.info(f"✅ Total prices: {len(prices_map)}")
+
+                # STEP 3: Get stock in batch
+                await asyncio.sleep(3)
+                logger.info("📊 Step 3: Getting batch stock...")
+
+                stock_map = {}
+                r3 = await client.get(
+                    f"{BIGBUY_API_URL}/catalog/productsstockbyreference.json",
+                    headers=self.headers,
+                    params={"pageSize": 500, "page": 1}
+                )
+
+                if r3.status_code == 200:
+                    sdata = r3.json()
+                    if isinstance(sdata, list):
+                        for s in sdata:
+                            stocks = s.get('stocks', [])
+                            pid = s.get('id') or s.get('productId')
+                            ref = s.get('reference') or s.get('sku')
+                            qty = 0
+                            if isinstance(stocks, list):
+                                qty = sum(st.get('quantity', 0) for st in stocks)
+                            elif 'quantity' in s:
+                                qty = s.get('quantity', 0)
+                            if pid:
+                                stock_map[pid] = qty
+                        logger.info(f"✅ Stock data: {len(stock_map)} products")
+                else:
+                    logger.warning(f"⚠️ Stock: {r3.status_code}")
+
+                # STEP 4: Combine everything
+                logger.info("🔧 Step 4: Building product list...")
+                all_products = []
+
+                for pid, cost in prices_map.items():
+                    if cost < 5 or cost > 200:
                         continue
 
-                    # Get price from batch or skip
-                    cost = prices_map.get(pid, 0)
+                    stock = stock_map.get(pid, 0)
+                    cat_item = catalog_map.get(pid, {})
+                    sku = cat_item.get('sku', '')
+                    name = cat_item.get('name', sku or f'Product-{pid}')
+                    in_shops = cat_item.get('inShopsQuantity', stock)
 
-                    # If no batch price, try individual (for first 20 only)
-                    if not cost and len(all_products) < 20:
-                        await asyncio.sleep(2)
-                        try:
-                            pr = await client.get(
-                                f"{BIGBUY_API_URL}/catalog/productprice/{pid}.json",
-                                headers=self.headers
-                            )
-                            if pr.status_code == 200:
-                                cost = pr.json().get('wholesalePrice', 0)
-                            elif pr.status_code == 429:
-                                logger.warning("⏳ Rate limited. Stopping individual prices.")
-                                break
-                        except:
-                            pass
-
-                    if cost and 5 <= cost <= 200 and stock > 0:
-                        product = self._build(pid, sku, name, "", cost, stock)
+                    if in_shops > 0 or stock > 0:
+                        product = self._build(pid, sku, name, "", cost, max(stock, in_shops))
                         all_products.append(product)
 
                 all_products.sort(key=lambda p: p['profit'], reverse=True)
-                self.products = all_products[:100]
+                self.products = all_products[:200]
 
-                logger.info(f"✅ Total profitable products: {len(self.products)}")
+                logger.info(f"✅ TOTAL profitable products: {len(self.products)}")
 
                 if self.products:
+                    top3 = [(p['name'][:30], p['cost_price'], p['selling_price']) for p in self.products[:3]]
+                    logger.info(f"🏆 Top 3: {top3}")
                     return {"products": self.products, "count": len(self.products), "source": "bigbuy"}
                 else:
                     return {"products": self._demo(), "source": "demo",
-                            "note": f"Catalog has {len(catalog)} items but none matched price/stock criteria",
-                            "prices_found": len(prices_map)}
+                            "catalog_count": len(catalog),
+                            "prices_count": len(prices_map),
+                            "stock_count": len(stock_map),
+                            "note": "No products matched all criteria (price 5-200, in stock)"}
 
         except Exception as e:
-            logger.error(f"❌ Error: {e}")
+            logger.error(f"❌ Fatal: {e}")
             return {"products": self._demo(), "source": "demo", "error": str(e)}
 
     def _build(self, pid, sku, name, desc, cost, stock) -> Dict:
@@ -167,24 +186,19 @@ class ProductManager:
         before = len(self.products)
         self.products = [p for p in self.products if p.get('in_stock')]
         r = before - len(self.products)
-        if r: logger.info(f"🗑️ Removed {r} out-of-stock")
+        if r: logger.info(f"🗑️ Removed {r}")
 
     async def get_current_products(self) -> List[Dict]:
         if not self.products: await self.fetch_profitable_products()
         return self.products
 
-    async def get_product_count(self) -> int:
-        return len(self.products)
+    async def get_product_count(self): return len(self.products)
 
     async def process_order(self, data: Dict) -> Dict:
-        order = {
-            "id": f"ORD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-            "customer": data.get("customer", {}),
-            "items": data.get("items", []),
-            "total": data.get("total", 0),
-            "status": "processing",
-            "created_at": datetime.now().isoformat()
-        }
+        order = {"id": f"ORD-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                 "customer": data.get("customer", {}), "items": data.get("items", []),
+                 "total": data.get("total", 0), "status": "processing",
+                 "created_at": datetime.now().isoformat()}
         if BIGBUY_API_KEY:
             r = await self._send_bigbuy(order)
             order["bigbuy_order_id"] = r.get("id")
@@ -202,17 +216,16 @@ class ProductManager:
                           "shippingAddress": order["customer"],
                           "products": [{"reference": i["sku"], "quantity": i.get("quantity",1)} for i in order["items"]]})
                 if r.status_code in [200,201]: return r.json()
-        except Exception as e:
-            logger.error(f"❌ Order error: {e}")
+        except Exception as e: logger.error(f"❌ Order: {e}")
         return {}
 
     async def get_orders(self): return self.orders
 
     def _demo(self) -> List[Dict]:
         return [
-            self._build("d1","DEMO-001","Premium Dog Bed","Cama premium",25.0,150),
-            self._build("d2","DEMO-002","Smart Pet Feeder","Comedero WiFi",35.0,80),
-            self._build("d3","DEMO-003","LED Night Light","Luz nocturna",8.0,300),
-            self._build("d4","DEMO-004","Wireless Charger","Cargador",12.0,200),
-            self._build("d5","DEMO-005","Resistance Bands","Bandas",10.0,250),
+            self._build("d1","DEMO-001","Premium Dog Bed","",25.0,150),
+            self._build("d2","DEMO-002","Smart Pet Feeder","",35.0,80),
+            self._build("d3","DEMO-003","LED Night Light","",8.0,300),
+            self._build("d4","DEMO-004","Wireless Charger","",12.0,200),
+            self._build("d5","DEMO-005","Resistance Bands","",10.0,250),
         ]
