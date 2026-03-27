@@ -107,6 +107,45 @@ async def fetch_new_products():
     return result
 
 
+@app.get("/api/test-bigbuy")
+async def test_bigbuy():
+    """اختبار سريع للاتصال بـ BigBuy API"""
+    import httpx
+    api_key = os.environ.get("BIGBUY_API_KEY", "")
+    if not api_key:
+        return {"error": "No API key set"}
+    
+    results = {}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Test 1: Get categories
+        try:
+            r = await client.get("https://api.bigbuy.eu/rest/catalog/categories.json",
+                                headers=headers, params={"pageSize": 5})
+            results["categories"] = {"status": r.status_code, "sample": r.text[:500]}
+        except Exception as e:
+            results["categories"] = {"error": str(e)}
+        
+        # Test 2: Get products  
+        try:
+            r = await client.get("https://api.bigbuy.eu/rest/catalog/products.json",
+                                headers=headers, params={"pageSize": 3, "page": 1})
+            results["products"] = {"status": r.status_code, "sample": r.text[:500]}
+        except Exception as e:
+            results["products"] = {"error": str(e)}
+        
+        # Test 3: Get prices
+        try:
+            r = await client.get("https://api.bigbuy.eu/rest/catalog/productsprices.json",
+                                headers=headers, params={"pageSize": 3, "page": 1})
+            results["prices"] = {"status": r.status_code, "sample": r.text[:500]}
+        except Exception as e:
+            results["prices"] = {"error": str(e)}
+    
+    return {"test": "BigBuy API Connection Test", "results": results}
+
+
 @app.get("/api/products/trending")
 async def get_trending():
     """المنتجات الرائجة في السوق"""
