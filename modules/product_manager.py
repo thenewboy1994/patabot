@@ -1,10 +1,11 @@
 """
-Product Manager — مدير المنتجات الشامل
-Gets products with names, descriptions, images, and prices from BigBuy.
-Full dropshipping solution.
+Product Manager — Fast version
+Step 1 (instant): Get catalog with prices
+Step 2 (background): Enrich with names, descriptions, images gradually
 """
 
 import os
+import re
 import logging
 import asyncio
 import httpx
@@ -25,32 +26,31 @@ class ProductManager:
     def __init__(self):
         self.products = []
         self.orders = []
+        self.enriching = False
         self.headers = {
             "Authorization": f"Bearer {BIGBUY_API_KEY}",
             "Content-Type": "application/json"
         }
 
     async def fetch_profitable_products(self) -> Dict:
-        logger.info("📦 Fetching complete products from BigBuy...")
+        """Fast fetch - catalog + prices only (< 30 seconds)"""
+        logger.info("📦 Fast fetch from BigBuy...")
 
         if not BIGBUY_API_KEY:
             return {"products": self._demo(), "source": "demo"}
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-
-                # STEP 1: Get product catalog with prices
-                logger.info("📂 Step 1: Getting catalog with prices...")
+            async with httpx.AsyncClient(timeout=60.0) as client:
                 all_items = []
                 page = 1
-                while page <= 5:
+                while page <= 3:
                     resp = await client.get(
                         f"{BIGBUY_API_URL}/catalog/products.json",
                         headers=self.headers,
                         params={"pageSize": 200, "page": page}
                     )
                     if resp.status_code == 429:
-                        await asyncio.sleep(15)
+                        await asyncio.sleep(10)
                         continue
                     if resp.status_code != 200:
                         break
@@ -58,143 +58,98 @@ class ProductManager:
                     if not isinstance(items, list) or not items:
                         break
                     all_items.extend(items)
-                    logger.info(f"  Page {page}: {len(items)} products")
                     page += 1
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
 
-                logger.info(f"✅ Total catalog: {len(all_items)} products")
+                logger.info(f"✅ Catalog: {len(all_items)} products")
 
-                # Filter profitable products
-                profitable = []
+                final = []
                 for item in all_items:
                     cost = item.get('wholesalePrice', 0)
-                    if cost and 3 <= cost <= 300:
-                        profitable.append(item)
-
-                profitable.sort(key=lambda x: x.get('wholesalePrice', 0), reverse=True)
-                profitable = profitable[:200]
-                logger.info(f"✅ Profitable products: {len(profitable)}")
-
-                if not profitable:
-                    return {"products": self._demo(), "source": "demo", "note": "No profitable products found"}
-
-                # STEP 2: Get product names and descriptions
-                logger.info("📝 Step 2: Getting product names & descriptions...")
-                product_ids = [p.get('id') for p in profitable if p.get('id')]
-
-                # Get info in batches using taxonomy
-                names_map = {}
-                descriptions_map = {}
-
-                # Try getting product info for first 50 products individually (with delays)
-                fetched_info = 0
-                for pid in product_ids[:50]:
-                    if fetched_info >= 50:
-                        break
-                    await asyncio.sleep(1.5)
-                    try:
-                        r = await client.get(
-                            f"{BIGBUY_API_URL}/catalog/productinformation/{pid}.json",
-                            headers=self.headers,
-                            params={"isoCode": "es"}
-                        )
-                        if r.status_code == 200:
-                            info = r.json()
-                            if isinstance(info, list) and info:
-                                names_map[pid] = info[0].get('name', '')
-                                descriptions_map[pid] = info[0].get('description', '')
-                                fetched_info += 1
-                            elif isinstance(info, dict):
-                                names_map[pid] = info.get('name', '')
-                                descriptions_map[pid] = info.get('description', '')
-                                fetched_info += 1
-                        elif r.status_code == 429:
-                            logger.warning("⏳ Rate limited on info. Waiting 10s...")
-                            await asyncio.sleep(10)
-                        elif r.status_code == 400:
-                            # Try without isoCode
-                            r2 = await client.get(
-                                f"{BIGBUY_API_URL}/catalog/productinformation/{pid}.json",
-                                headers=self.headers
-                            )
-                            if r2.status_code == 200:
-                                info = r2.json()
-                                if isinstance(info, list) and info:
-                                    names_map[pid] = info[0].get('name', '')
-                                    descriptions_map[pid] = info[0].get('description', '')
-                                    fetched_info += 1
-                    except:
+                    if not cost or cost < 3 or cost > 300:
                         continue
+                    final.append(self._build(
+                        item.get('id'), item.get('sku', ''),
+                        item.get('sku', ''), "", cost,
+                        item.get('inShopsQuantity', 1) or 1, []
+                    ))
 
-                logger.info(f"✅ Got names for {len(names_map)} products")
+                final.sort(key=lambda p: p['profit'], reverse=True)
+                self.products = final[:200]
+                logger.info(f"✅ Ready: {len(self.products)} profitable products")
 
-                # STEP 3: Get product images
-                logger.info("🖼️ Step 3: Getting product images...")
-                images_map = {}
-                fetched_imgs = 0
+                # Start background enrichment (don't wait for it)
+                if self.products and not self.enriching:
+                    asyncio.create_task(self._enrich_products())
 
-                for pid in product_ids[:50]:
-                    if fetched_imgs >= 50:
-                        break
-                    await asyncio.sleep(1.5)
-                    try:
-                        r = await client.get(
-                            f"{BIGBUY_API_URL}/catalog/productimages/{pid}.json",
-                            headers=self.headers
-                        )
-                        if r.status_code == 200:
-                            imgs = r.json()
-                            if isinstance(imgs, list):
-                                urls = [img.get('url', '') for img in imgs[:5] if img.get('url')]
-                                if urls:
-                                    images_map[pid] = urls
-                                    fetched_imgs += 1
-                        elif r.status_code == 429:
-                            logger.warning("⏳ Rate limited on images. Waiting 10s...")
-                            await asyncio.sleep(10)
-                    except:
-                        continue
-
-                logger.info(f"✅ Got images for {len(images_map)} products")
-
-                # STEP 4: Build final product list
-                logger.info("🔧 Step 4: Building final product list...")
-                final_products = []
-
-                for item in profitable:
-                    pid = item.get('id')
-                    cost = item.get('wholesalePrice', 0)
-                    sku = item.get('sku', '')
-
-                    name = names_map.get(pid, sku)
-                    description = descriptions_map.get(pid, '')
-                    images = images_map.get(pid, [])
-
-                    # Clean description (remove HTML tags simply)
-                    if description:
-                        import re
-                        description = re.sub(r'<[^>]+>', ' ', description)
-                        description = ' '.join(description.split())[:500]
-
-                    product = self._build(pid, sku, name, description, cost,
-                                         item.get('inShopsQuantity', 1) or 1, images)
-                    final_products.append(product)
-
-                final_products.sort(key=lambda p: p['profit'], reverse=True)
-                self.products = final_products
-
-                logger.info(f"🎉 TOTAL READY: {len(self.products)} products with details!")
-
-                if self.products:
-                    top3 = [(p['name'][:40], f"€{p['cost_price']}→€{p['selling_price']}", f"profit:€{p['profit']}") for p in self.products[:3]]
-                    logger.info(f"🏆 Top 3: {top3}")
-
-                return {"products": self.products, "count": len(self.products), "source": "bigbuy",
-                        "with_names": len(names_map), "with_images": len(images_map)}
+                return {"products": self.products, "count": len(self.products),
+                        "source": "bigbuy", "status": "names and images loading in background"}
 
         except Exception as e:
             logger.error(f"❌ Error: {e}")
             return {"products": self._demo(), "source": "demo", "error": str(e)}
+
+    async def _enrich_products(self):
+        """Background task: add names, descriptions, images"""
+        if self.enriching:
+            return
+        self.enriching = True
+        logger.info("🎨 Starting background enrichment...")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            enriched = 0
+            for product in self.products[:100]:
+                pid = product['id']
+                if str(pid).startswith('d'):
+                    continue
+
+                # Get name and description
+                await asyncio.sleep(2)
+                try:
+                    r = await client.get(
+                        f"{BIGBUY_API_URL}/catalog/productinformation/{pid}.json",
+                        headers=self.headers,
+                        params={"isoCode": "es"}
+                    )
+                    if r.status_code == 200:
+                        info = r.json()
+                        if isinstance(info, list) and info:
+                            product['name'] = info[0].get('name', product['sku'])
+                            desc = info[0].get('description', '')
+                            if desc:
+                                product['description'] = re.sub(r'<[^>]+>', ' ', desc)[:500]
+                        elif isinstance(info, dict):
+                            product['name'] = info.get('name', product['sku'])
+                            desc = info.get('description', '')
+                            if desc:
+                                product['description'] = re.sub(r'<[^>]+>', ' ', desc)[:500]
+                    elif r.status_code == 429:
+                        await asyncio.sleep(15)
+                except:
+                    pass
+
+                # Get images
+                await asyncio.sleep(2)
+                try:
+                    r = await client.get(
+                        f"{BIGBUY_API_URL}/catalog/productimages/{pid}.json",
+                        headers=self.headers
+                    )
+                    if r.status_code == 200:
+                        imgs = r.json()
+                        if isinstance(imgs, list):
+                            product['images'] = [i.get('url','') for i in imgs[:5] if i.get('url')]
+                    elif r.status_code == 429:
+                        await asyncio.sleep(15)
+                except:
+                    pass
+
+                enriched += 1
+                if enriched % 10 == 0:
+                    logger.info(f"🎨 Enriched {enriched} products...")
+
+        self.enriching = False
+        logger.info(f"✅ Enrichment complete: {enriched} products updated")
 
     def _build(self, pid, sku, name, desc, cost, stock, images=None) -> Dict:
         margin = MAX_MARGIN if cost < 15 else (TARGET_MARGIN if cost < 50 else MIN_MARGIN)
@@ -252,7 +207,7 @@ class ProductManager:
 
     def _demo(self) -> List[Dict]:
         return [
-            self._build("d1","DEMO-001","Premium Dog Bed","Cama ortopédica premium para perros",25.0,150),
-            self._build("d2","DEMO-002","Smart Pet Feeder","Comedero automático WiFi",35.0,80),
-            self._build("d3","DEMO-003","LED Night Light","Luz nocturna LED decorativa",8.0,300),
+            self._build("d1","DEMO-001","Premium Dog Bed","Cama premium",25.0,150),
+            self._build("d2","DEMO-002","Smart Pet Feeder","Comedero WiFi",35.0,80),
+            self._build("d3","DEMO-003","LED Night Light","Luz LED",8.0,300),
         ]
