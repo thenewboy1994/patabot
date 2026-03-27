@@ -1,7 +1,6 @@
 """
 Product Manager — مدير المنتجات
-Gets products from BigBuy with prices included in product data.
-No separate price endpoint needed!
+Gets products from BigBuy - prices included in product data.
 """
 
 import os
@@ -37,11 +36,11 @@ class ProductManager:
             return {"products": self._demo(), "source": "demo"}
 
         all_products = []
+        skipped_reasons = {"no_price": 0, "price_low": 0, "price_high": 0, "not_active": 0, "accepted": 0}
 
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 page = 1
-                total_fetched = 0
 
                 while page <= 5:
                     logger.info(f"📂 Fetching page {page}...")
@@ -64,20 +63,35 @@ class ProductManager:
                     if not isinstance(items, list) or not items:
                         break
 
-                    total_fetched += len(items)
                     logger.info(f"  Got {len(items)} products")
 
-                    for item in items:
-                        cost = item.get('wholesalePrice', 0)
-                        stock = item.get('inShopsQuantity', 0)
-                        active = item.get('active', 0)
+                    # Log first product structure for debugging
+                    if page == 1 and items:
+                        first = items[0]
+                        logger.info(f"  📋 Sample product keys: {list(first.keys())}")
+                        logger.info(f"  📋 Sample: wholesalePrice={first.get('wholesalePrice')}, "
+                                   f"retailPrice={first.get('retailPrice')}, "
+                                   f"inShopsPrice={first.get('inShopsPrice')}, "
+                                   f"active={first.get('active')}, "
+                                   f"inShopsQuantity={first.get('inShopsQuantity')}")
 
-                        if not cost or cost < 5 or cost > 200:
+                    for item in items:
+                        # Get cost price - try multiple fields
+                        cost = item.get('wholesalePrice', 0) or item.get('retailPrice', 0) or 0
+
+                        if not cost or cost <= 0:
+                            skipped_reasons["no_price"] += 1
                             continue
-                        if stock <= 0:
+                        if cost < 3:
+                            skipped_reasons["price_low"] += 1
                             continue
-                        if not active:
+                        if cost > 300:
+                            skipped_reasons["price_high"] += 1
                             continue
+
+                        # Accept product even if stock is 0 or missing
+                        # BigBuy handles stock - we just list products
+                        stock = item.get('inShopsQuantity', 1) or 1
 
                         product = self._build(
                             item.get('id'),
@@ -88,23 +102,26 @@ class ProductManager:
                             stock
                         )
                         all_products.append(product)
+                        skipped_reasons["accepted"] += 1
 
                     page += 1
                     await asyncio.sleep(3)
 
                 all_products.sort(key=lambda p: p['profit'], reverse=True)
-                self.products = all_products[:200]
+                self.products = all_products[:500]
 
-                logger.info(f"✅ Total fetched: {total_fetched}, Profitable: {len(self.products)}")
+                logger.info(f"✅ Stats: {skipped_reasons}")
+                logger.info(f"✅ Total profitable: {len(self.products)}")
 
                 if self.products:
-                    top3 = [(p['sku'], p['cost_price'], p['selling_price'], p['profit']) for p in self.products[:3]]
-                    logger.info(f"🏆 Top 3: {top3}")
-                    return {"products": self.products, "count": len(self.products), "source": "bigbuy"}
+                    top5 = [(p['sku'], f"cost:{p['cost_price']}", f"sell:{p['selling_price']}", f"profit:{p['profit']}") for p in self.products[:5]]
+                    logger.info(f"🏆 Top 5: {top5}")
+                    return {"products": self.products, "count": len(self.products), "source": "bigbuy",
+                            "stats": skipped_reasons}
                 else:
                     return {"products": self._demo(), "source": "demo",
-                            "total_fetched": total_fetched,
-                            "note": "Products fetched but none matched criteria"}
+                            "stats": skipped_reasons,
+                            "note": "No products matched. Check stats for reasons."}
 
         except Exception as e:
             logger.error(f"❌ Error: {e}")
@@ -118,7 +135,7 @@ class ProductManager:
             "description": desc[:500] if desc else "",
             "cost_price": cost, "selling_price": sell,
             "profit": round(sell - cost, 2), "profit_margin": margin,
-            "images": [], "in_stock": stock > 0,
+            "images": [], "in_stock": True,
             "stock_quantity": stock, "added_date": datetime.now().isoformat()
         }
 
