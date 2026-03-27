@@ -1,6 +1,7 @@
 """
 Product Manager — مدير المنتجات
-Uses ONLY batch BigBuy API endpoints to avoid 400/429 errors.
+Gets products from BigBuy with prices included in product data.
+No separate price endpoint needed!
 """
 
 import os
@@ -30,141 +31,83 @@ class ProductManager:
         }
 
     async def fetch_profitable_products(self) -> Dict:
-        logger.info("📦 Fetching products from BigBuy (batch mode)...")
+        logger.info("📦 Fetching products from BigBuy...")
 
         if not BIGBUY_API_KEY:
             return {"products": self._demo(), "source": "demo"}
 
+        all_products = []
+
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
-
-                # STEP 1: Get products catalog
-                logger.info("📂 Step 1: Getting catalog...")
-                r1 = await client.get(
-                    f"{BIGBUY_API_URL}/catalog/products.json",
-                    headers=self.headers,
-                    params={"pageSize": 500, "page": 1}
-                )
-
-                if r1.status_code != 200:
-                    err = f"Catalog: {r1.status_code} - {r1.text[:200]}"
-                    logger.error(f"❌ {err}")
-                    return {"products": self._demo(), "source": "demo", "error": err}
-
-                catalog = r1.json()
-                if not isinstance(catalog, list):
-                    return {"products": self._demo(), "source": "demo",
-                            "error": f"Catalog type: {type(catalog).__name__}"}
-
-                logger.info(f"✅ Catalog: {len(catalog)} products")
-
-                # Build catalog map by ID
-                catalog_map = {}
-                for item in catalog:
-                    pid = item.get('id')
-                    if pid:
-                        catalog_map[pid] = item
-
-                # STEP 2: Get ALL prices in batch
-                await asyncio.sleep(3)
-                logger.info("💰 Step 2: Getting batch prices...")
-
-                prices_map = {}
                 page = 1
-                while page <= 3:
-                    r2 = await client.get(
-                        f"{BIGBUY_API_URL}/catalog/productsprices.json",
+                total_fetched = 0
+
+                while page <= 5:
+                    logger.info(f"📂 Fetching page {page}...")
+                    resp = await client.get(
+                        f"{BIGBUY_API_URL}/catalog/products.json",
                         headers=self.headers,
-                        params={"pageSize": 500, "page": page}
+                        params={"pageSize": 200, "page": page}
                     )
 
-                    if r2.status_code == 200:
-                        pdata = r2.json()
-                        if isinstance(pdata, list) and pdata:
-                            for p in pdata:
-                                pid = p.get('id') or p.get('productId')
-                                wp = p.get('wholesalePrice', 0)
-                                if pid and wp and wp > 0:
-                                    prices_map[pid] = wp
-                            logger.info(f"  Page {page}: {len(pdata)} prices")
-                            page += 1
-                            await asyncio.sleep(2)
-                        else:
-                            break
-                    elif r2.status_code == 429:
-                        logger.warning("⏳ Rate limited on prices. Waiting 15s...")
+                    if resp.status_code == 429:
+                        logger.warning("⏳ Rate limited. Waiting 15s...")
                         await asyncio.sleep(15)
-                    else:
-                        logger.warning(f"⚠️ Prices page {page}: {r2.status_code} - {r2.text[:200]}")
-                        break
-
-                logger.info(f"✅ Total prices: {len(prices_map)}")
-
-                # STEP 3: Get stock in batch
-                await asyncio.sleep(3)
-                logger.info("📊 Step 3: Getting batch stock...")
-
-                stock_map = {}
-                r3 = await client.get(
-                    f"{BIGBUY_API_URL}/catalog/productsstockbyreference.json",
-                    headers=self.headers,
-                    params={"pageSize": 500, "page": 1}
-                )
-
-                if r3.status_code == 200:
-                    sdata = r3.json()
-                    if isinstance(sdata, list):
-                        for s in sdata:
-                            stocks = s.get('stocks', [])
-                            pid = s.get('id') or s.get('productId')
-                            ref = s.get('reference') or s.get('sku')
-                            qty = 0
-                            if isinstance(stocks, list):
-                                qty = sum(st.get('quantity', 0) for st in stocks)
-                            elif 'quantity' in s:
-                                qty = s.get('quantity', 0)
-                            if pid:
-                                stock_map[pid] = qty
-                        logger.info(f"✅ Stock data: {len(stock_map)} products")
-                else:
-                    logger.warning(f"⚠️ Stock: {r3.status_code}")
-
-                # STEP 4: Combine everything
-                logger.info("🔧 Step 4: Building product list...")
-                all_products = []
-
-                for pid, cost in prices_map.items():
-                    if cost < 5 or cost > 200:
                         continue
 
-                    stock = stock_map.get(pid, 0)
-                    cat_item = catalog_map.get(pid, {})
-                    sku = cat_item.get('sku', '')
-                    name = cat_item.get('name', sku or f'Product-{pid}')
-                    in_shops = cat_item.get('inShopsQuantity', stock)
+                    if resp.status_code != 200:
+                        logger.error(f"❌ Page {page}: {resp.status_code}")
+                        break
 
-                    if in_shops > 0 or stock > 0:
-                        product = self._build(pid, sku, name, "", cost, max(stock, in_shops))
+                    items = resp.json()
+                    if not isinstance(items, list) or not items:
+                        break
+
+                    total_fetched += len(items)
+                    logger.info(f"  Got {len(items)} products")
+
+                    for item in items:
+                        cost = item.get('wholesalePrice', 0)
+                        stock = item.get('inShopsQuantity', 0)
+                        active = item.get('active', 0)
+
+                        if not cost or cost < 5 or cost > 200:
+                            continue
+                        if stock <= 0:
+                            continue
+                        if not active:
+                            continue
+
+                        product = self._build(
+                            item.get('id'),
+                            item.get('sku', ''),
+                            item.get('sku', f"Product-{item.get('id')}"),
+                            "",
+                            cost,
+                            stock
+                        )
                         all_products.append(product)
+
+                    page += 1
+                    await asyncio.sleep(3)
 
                 all_products.sort(key=lambda p: p['profit'], reverse=True)
                 self.products = all_products[:200]
 
-                logger.info(f"✅ TOTAL profitable products: {len(self.products)}")
+                logger.info(f"✅ Total fetched: {total_fetched}, Profitable: {len(self.products)}")
 
                 if self.products:
-                    top3 = [(p['name'][:30], p['cost_price'], p['selling_price']) for p in self.products[:3]]
+                    top3 = [(p['sku'], p['cost_price'], p['selling_price'], p['profit']) for p in self.products[:3]]
                     logger.info(f"🏆 Top 3: {top3}")
                     return {"products": self.products, "count": len(self.products), "source": "bigbuy"}
                 else:
                     return {"products": self._demo(), "source": "demo",
-                            "catalog_count": len(catalog),
-                            "prices_count": len(prices_map),
-                            "stock_count": len(stock_map),
-                            "note": "No products matched all criteria (price 5-200, in stock)"}
+                            "total_fetched": total_fetched,
+                            "note": "Products fetched but none matched criteria"}
 
         except Exception as e:
-            logger.error(f"❌ Fatal: {e}")
+            logger.error(f"❌ Error: {e}")
             return {"products": self._demo(), "source": "demo", "error": str(e)}
 
     def _build(self, pid, sku, name, desc, cost, stock) -> Dict:
@@ -226,6 +169,4 @@ class ProductManager:
             self._build("d1","DEMO-001","Premium Dog Bed","",25.0,150),
             self._build("d2","DEMO-002","Smart Pet Feeder","",35.0,80),
             self._build("d3","DEMO-003","LED Night Light","",8.0,300),
-            self._build("d4","DEMO-004","Wireless Charger","",12.0,200),
-            self._build("d5","DEMO-005","Resistance Bands","",10.0,250),
         ]
