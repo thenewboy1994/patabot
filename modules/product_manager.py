@@ -1,8 +1,7 @@
 """
-PataBot — Product Manager Module v3
-Fetches products from BigBuy API with real images and multilingual descriptions.
-Fixed image parsing to match BigBuy's actual response format.
-Updated: March 2026
+PataBot — Product Manager Module v4
+IMAGES FIRST strategy: enrich with images only, skip product info to avoid rate limiting.
+Names/descriptions fetched later in a separate pass.
 """
 
 import httpx
@@ -18,7 +17,6 @@ BIGBUY_BASE = "https://api.bigbuy.eu"
 
 
 class ProductManager:
-    """Manages products: fetch from BigBuy, enrich with images/descriptions, cache."""
 
     def __init__(self):
         self.products_cache = []
@@ -39,68 +37,57 @@ class ProductManager:
         else:
             return 1.30
 
-    # ─── Safe API Call with Retry ───
+    async def _api_get(self, client, url, params=None):
+        """Simple API call — returns data or None. No retries (to save rate limit)."""
+        try:
+            resp = await client.get(url, headers=self.headers, params=params)
+            if resp.status_code == 200:
+                return resp.json()
+            elif resp.status_code == 429:
+                logger.warning(f"429 rate limit: {url}")
+                return None
+            else:
+                logger.debug(f"Status {resp.status_code}: {url}")
+                return None
+        except Exception as e:
+            logger.error(f"Error: {url} — {e}")
+            return None
 
-    async def _safe_api_call(self, client: httpx.AsyncClient, url: str, params: dict = None, max_retries: int = 3) -> dict:
-        """Make an API call with automatic retry on 429."""
-        for attempt in range(max_retries):
-            try:
-                resp = await client.get(url, headers=self.headers, params=params)
-                if resp.status_code == 200:
-                    return {"status": 200, "data": resp.json()}
-                elif resp.status_code == 429:
-                    wait_time = 15 * (attempt + 1)
-                    logger.warning(f"429 on {url}, waiting {wait_time}s (attempt {attempt+1})")
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    return {"status": resp.status_code, "data": None}
-            except Exception as e:
-                logger.error(f"API error {url}: {e}")
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(5)
-                return {"status": 0, "data": None}
-        return {"status": 429, "data": None}
+    # ─── Fetch Products ───
 
-    # ─── Main Product Fetch ───
-
-    async def fetch_profitable_products(self, max_pages: int = 3, page_size: int = 200) -> dict:
+    async def fetch_profitable_products(self, max_pages=3, page_size=200):
         all_products = []
-        fetch_errors = []
+        errors = []
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             for page in range(1, max_pages + 1):
                 url = f"{BIGBUY_BASE}/rest/catalog/products.json"
-                params = {"pageSize": page_size, "page": page}
-                result = await self._safe_api_call(client, url, params)
+                data = await self._api_get(client, url, {"pageSize": page_size, "page": page})
 
-                if result["status"] != 200 or not result["data"]:
-                    fetch_errors.append(f"Page {page}: status {result['status']}")
-                    break
-
-                data = result["data"]
                 if not data:
-                    break
+                    errors.append(f"Page {page} failed")
+                    # Wait and retry once
+                    await asyncio.sleep(15)
+                    data = await self._api_get(client, url, {"pageSize": page_size, "page": page})
+                    if not data:
+                        break
 
                 for item in data:
-                    wholesale = item.get("wholesalePrice")
-                    if wholesale and float(wholesale) > 0:
-                        wp = float(wholesale)
-                        margin = self._get_margin(wp)
-                        selling_price = round(wp * margin, 2)
-                        old_price = round(selling_price * 1.23, 2)
-                        profit = round(selling_price - wp, 2)
-
+                    wp = item.get("wholesalePrice")
+                    if wp and float(wp) > 0:
+                        wp = float(wp)
+                        m = self._get_margin(wp)
+                        sp = round(wp * m, 2)
                         all_products.append({
                             "id": item.get("id"),
                             "sku": item.get("sku", ""),
                             "name": item.get("name", f"Product #{item.get('id')}"),
                             "description": "",
                             "wholesale_price": wp,
-                            "selling_price": selling_price,
-                            "old_price": old_price,
-                            "profit": profit,
-                            "margin_pct": round((margin - 1) * 100),
+                            "selling_price": sp,
+                            "old_price": round(sp * 1.23, 2),
+                            "profit": round(sp - wp, 2),
+                            "margin_pct": round((m - 1) * 100),
                             "category": item.get("category", ""),
                             "images": [],
                             "image_url": "",
@@ -108,7 +95,7 @@ class ProductManager:
                             "enriched": False
                         })
 
-                logger.info(f"Page {page}: {len(data)} products fetched")
+                logger.info(f"Page {page}: {len(data)} products")
                 if page < max_pages:
                     await asyncio.sleep(5)
 
@@ -117,227 +104,197 @@ class ProductManager:
         self.last_fetch_time = datetime.now().isoformat()
         logger.info(f"Cached {len(self.products_cache)} products")
 
+        # Start IMAGES-ONLY enrichment
         if self.products_cache:
-            asyncio.create_task(self._enrich_all_products())
+            asyncio.create_task(self._enrich_images_only())
 
         return {
-            "products": [self._format_product(p) for p in self.products_cache[:20]],
+            "products": [self._fmt(p) for p in self.products_cache[:20]],
             "count": len(self.products_cache),
-            "errors": fetch_errors,
-            "message": f"Fetched {len(self.products_cache)} products. Enrichment started in background."
+            "errors": errors,
+            "message": f"Fetched {len(self.products_cache)} products. Image enrichment started."
         }
 
-    # ─── Image Fetching — FIXED for BigBuy format ───
+    # ─── IMAGES-ONLY Enrichment (fast, avoids rate limit) ───
 
-    async def _fetch_product_images(self, client: httpx.AsyncClient, product_id: int) -> list:
-        """
-        Fetch images for a product.
-        BigBuy returns: {"id": 1289533, "images": [{"id": 7739715, "isCover": true, "url": "https://cdn.bigbuy.com/images/...", ...}, ...]}
-        """
-        url = f"{BIGBUY_BASE}/rest/catalog/productimages/{product_id}.json"
-        result = await self._safe_api_call(client, url, max_retries=2)
-
-        if result["status"] != 200 or not result["data"]:
-            return []
-
-        data = result["data"]
-        image_urls = []
-
-        try:
-            # BigBuy format: {"id": X, "images": [{...}, ...]}
-            if isinstance(data, dict) and "images" in data:
-                for img in data["images"]:
-                    if isinstance(img, dict) and img.get("url"):
-                        image_urls.append(img["url"])
-
-            # Alternative: direct list of image objects
-            elif isinstance(data, list):
-                for img in data:
-                    if isinstance(img, dict) and img.get("url"):
-                        image_urls.append(img["url"])
-
-            # Alternative: dict without "images" key but with url values
-            elif isinstance(data, dict):
-                for key, val in data.items():
-                    if isinstance(val, str) and val.startswith("http") and (".jpg" in val or ".png" in val or ".webp" in val):
-                        image_urls.append(val)
-
-        except Exception as e:
-            logger.error(f"Image parse error for {product_id}: {e}")
-
-        # Sort: put cover image first
-        if isinstance(data, dict) and "images" in data:
-            try:
-                cover_imgs = [img["url"] for img in data["images"] if isinstance(img, dict) and img.get("isCover") and img.get("url")]
-                other_imgs = [img["url"] for img in data["images"] if isinstance(img, dict) and not img.get("isCover") and img.get("url")]
-                if cover_imgs:
-                    image_urls = cover_imgs + other_imgs
-            except:
-                pass
-
-        return image_urls
-
-    # ─── Product Info — FIXED for BigBuy format ───
-
-    async def _fetch_product_info(self, client: httpx.AsyncClient, product_id: int) -> dict:
-        """
-        Fetch multilingual product info.
-        BigBuy returns a list: [{"id": X, "sku": "...", "name": "...", "description": "...", ...}]
-        """
-        url = f"{BIGBUY_BASE}/rest/catalog/productinformation/{product_id}.json"
-        result = await self._safe_api_call(client, url, max_retries=2)
-
-        if result["status"] != 200 or not result["data"]:
-            return {}
-
-        data = result["data"]
-        descriptions = {}
-
-        try:
-            # BigBuy format: list with one item containing name+description
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        # Check for isoCode or language field
-                        lang = item.get("isoCode", item.get("language", "")).lower()
-                        name = item.get("name", "")
-                        desc = item.get("description", "")
-                        if lang and (name or desc):
-                            descriptions[lang] = {"name": name, "description": desc}
-                        elif name and not lang:
-                            # No language specified, assume Spanish
-                            descriptions["es"] = {"name": name, "description": desc}
-
-            # Single dict with name and description
-            elif isinstance(data, dict):
-                name = data.get("name", "")
-                desc = data.get("description", "")
-                sku = data.get("sku", "")
-                if name:
-                    descriptions["es"] = {"name": name, "description": desc}
-
-        except Exception as e:
-            logger.error(f"Info parse error for {product_id}: {e}")
-
-        return descriptions
-
-    # ─── Background Enrichment ───
-
-    async def _enrich_all_products(self):
+    async def _enrich_images_only(self):
+        """Fetch ONLY images for each product. One request per product, 3s delay."""
         if self.enrichment_running:
-            logger.info("Enrichment already running")
             return
-
         self.enrichment_running = True
-        enriched_count = 0
-        images_count = 0
+        count = 0
+        img_count = 0
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                for i, product in enumerate(self.products_cache):
+                for product in self.products_cache:
                     if product.get("enriched"):
                         continue
 
                     pid = product["id"]
+                    url = f"{BIGBUY_BASE}/rest/catalog/productimages/{pid}.json"
+                    data = await self._api_get(client, url)
 
-                    # Fetch images
-                    try:
-                        images = await self._fetch_product_images(client, pid)
-                        if images:
-                            product["images"] = images
-                            product["image_url"] = images[0]
-                            images_count += 1
-                    except Exception as e:
-                        logger.debug(f"Image fetch failed for {pid}: {e}")
-
-                    await asyncio.sleep(3)  # 3s delay between requests
-
-                    # Fetch info
-                    try:
-                        descriptions = await self._fetch_product_info(client, pid)
-                        if descriptions:
-                            product["descriptions"] = descriptions
-                            # Update name from Spanish or English
-                            for lang in ["es", "en", "fr", "de"]:
-                                if lang in descriptions and descriptions[lang].get("name"):
-                                    product["name"] = descriptions[lang]["name"]
-                                    break
-                    except Exception as e:
-                        logger.debug(f"Info fetch failed for {pid}: {e}")
+                    if data:
+                        urls = self._parse_images(data)
+                        if urls:
+                            product["images"] = urls
+                            product["image_url"] = urls[0]
+                            img_count += 1
 
                     product["enriched"] = True
-                    enriched_count += 1
+                    count += 1
 
-                    await asyncio.sleep(3)  # 3s delay
+                    # 3 second delay to respect rate limit
+                    await asyncio.sleep(3)
 
-                    if enriched_count % 5 == 0:
-                        logger.info(f"Enriched {enriched_count}/{len(self.products_cache)} — {images_count} with images")
+                    if count % 10 == 0:
+                        logger.info(f"Images: {count}/{len(self.products_cache)} done, {img_count} with images")
 
-            logger.info(f"ENRICHMENT COMPLETE: {enriched_count} enriched, {images_count} with images")
+            logger.info(f"IMAGE ENRICHMENT DONE: {count} processed, {img_count} with images")
+
+            # After images are done, fetch names in a separate slower pass
+            await asyncio.sleep(30)  # Wait 30s before starting names
+            await self._enrich_names()
 
         except Exception as e:
             logger.error(f"Enrichment error: {e}")
         finally:
             self.enrichment_running = False
 
-    # ─── Format for API ───
+    def _parse_images(self, data) -> list:
+        """Parse BigBuy image response. Format: {"id": X, "images": [{"url": "...", "isCover": true}]}"""
+        urls = []
+        cover = []
+        others = []
 
-    def _format_product(self, p: dict) -> dict:
+        try:
+            images_list = None
+
+            if isinstance(data, dict) and "images" in data:
+                images_list = data["images"]
+            elif isinstance(data, list):
+                images_list = data
+
+            if images_list:
+                for img in images_list:
+                    if isinstance(img, dict) and img.get("url"):
+                        u = img["url"]
+                        if img.get("isCover"):
+                            cover.append(u)
+                        else:
+                            others.append(u)
+
+            urls = cover + others
+        except:
+            pass
+
+        return urls
+
+    # ─── Names Enrichment (separate slower pass) ───
+
+    async def _enrich_names(self):
+        """Fetch product names/descriptions — slower pass with 5s delays."""
+        logger.info("Starting names enrichment (slow pass)...")
+        count = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                for product in self.products_cache:
+                    if product.get("descriptions"):
+                        continue  # Already has names
+
+                    pid = product["id"]
+                    url = f"{BIGBUY_BASE}/rest/catalog/productinformation/{pid}.json"
+                    data = await self._api_get(client, url)
+
+                    if data:
+                        descs = self._parse_info(data)
+                        if descs:
+                            product["descriptions"] = descs
+                            for lang in ["es", "en", "fr", "de"]:
+                                if lang in descs and descs[lang].get("name"):
+                                    product["name"] = descs[lang]["name"]
+                                    break
+                            count += 1
+
+                    # 5 second delay — very conservative
+                    await asyncio.sleep(5)
+
+                    if count % 10 == 0 and count > 0:
+                        logger.info(f"Names: {count} products updated")
+
+            logger.info(f"NAMES ENRICHMENT DONE: {count} names updated")
+        except Exception as e:
+            logger.error(f"Names enrichment error: {e}")
+
+    def _parse_info(self, data) -> dict:
+        """Parse BigBuy product info response."""
+        descs = {}
+        try:
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        lang = item.get("isoCode", item.get("language", "")).lower()
+                        name = item.get("name", "")
+                        desc = item.get("description", "")
+                        if lang and (name or desc):
+                            descs[lang] = {"name": name, "description": desc}
+                        elif name:
+                            descs["es"] = {"name": name, "description": desc}
+            elif isinstance(data, dict) and data.get("name"):
+                descs["es"] = {"name": data["name"], "description": data.get("description", "")}
+        except:
+            pass
+        return descs
+
+    # ─── Format ───
+
+    def _fmt(self, p):
         return {
-            "id": p["id"],
-            "sku": p["sku"],
-            "name": p["name"],
+            "id": p["id"], "sku": p["sku"], "name": p["name"],
             "description": p.get("description", ""),
-            "selling_price": p["selling_price"],
-            "old_price": p["old_price"],
-            "profit": p["profit"],
-            "margin_pct": p["margin_pct"],
-            "image_url": p.get("image_url", ""),
-            "images": p.get("images", []),
+            "selling_price": p["selling_price"], "old_price": p["old_price"],
+            "profit": p["profit"], "margin_pct": p["margin_pct"],
+            "image_url": p.get("image_url", ""), "images": p.get("images", []),
             "descriptions": p.get("descriptions", {}),
-            "enriched": p.get("enriched", False),
-            "category": p.get("category", "")
+            "enriched": p.get("enriched", False), "category": p.get("category", "")
         }
 
     # ─── API Methods ───
 
-    async def get_current_products(self) -> list:
+    async def get_current_products(self):
         if not self.products_cache:
             await self.fetch_profitable_products(max_pages=2)
-        return [self._format_product(p) for p in self.products_cache[:200]]
+        return [self._fmt(p) for p in self.products_cache[:200]]
 
-    async def get_product_count(self) -> int:
+    async def get_product_count(self):
         return len(self.products_cache)
 
-    async def get_orders(self) -> list:
+    async def get_orders(self):
         return self.orders
 
-    async def process_order(self, order_data: dict) -> dict:
-        order = {
-            "id": len(self.orders) + 1,
-            "product_id": order_data.get("product_id"),
-            "customer": order_data.get("customer", {}),
-            "status": "pending",
-            "created_at": datetime.now().isoformat()
-        }
+    async def process_order(self, data):
+        order = {"id": len(self.orders)+1, "product_id": data.get("product_id"),
+                 "customer": data.get("customer",{}), "status": "pending",
+                 "created_at": datetime.now().isoformat()}
         self.orders.append(order)
         return {"status": "success", "order": order}
 
     async def update_inventory_and_prices(self):
-        logger.info("Updating inventory...")
+        pass
 
     async def remove_unavailable_products(self):
-        logger.info("Checking availability...")
+        pass
 
-    def get_enrichment_status(self) -> dict:
+    def get_enrichment_status(self):
         total = len(self.products_cache)
         enriched = sum(1 for p in self.products_cache if p.get("enriched"))
         with_images = sum(1 for p in self.products_cache if p.get("image_url"))
+        with_names = sum(1 for p in self.products_cache if p.get("descriptions"))
         return {
-            "total_products": total,
-            "enriched": enriched,
-            "with_images": with_images,
-            "progress_pct": round((enriched / total * 100) if total > 0 else 0),
-            "running": self.enrichment_running,
-            "last_fetch": self.last_fetch_time
+            "total_products": total, "enriched": enriched,
+            "with_images": with_images, "with_names": with_names,
+            "progress_pct": round((enriched/total*100) if total > 0 else 0),
+            "running": self.enrichment_running, "last_fetch": self.last_fetch_time
         }
