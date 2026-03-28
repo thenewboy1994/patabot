@@ -2,10 +2,10 @@
 PataBot — الوكيل الذكي الشامل لـ PataHogar.com
 =================================================
 وكيل دروبشيبينج ذكي يقوم بكل المهمات:
-- جلب أي منتج مربح من BigBuy API (كل الفئات — ليس فقط حيوانات ومنزل)
+- جلب أي منتج مربح من BigBuy API (كل الفئات)
 - تحديث الموقع بالمنتجات والأسعار والصور
-- تحليل المنتجات الرائجة (Ad Library research)
-- إنشاء محتوى تسويقي (صور + فيديو)
+- تحليل المنتجات الرائجة
+- إنشاء محتوى تسويقي
 - نشر إعلانات على Meta, TikTok, Snapchat
 - خدمة العملاء (الرد على الرسائل بـ 8 لغات)
 - حماية الموقع ومراقبته
@@ -67,7 +67,7 @@ scheduler = AsyncIOScheduler()
 
 
 # ============================================
-# API ENDPOINTS - لوحة التحكم لمحمد
+# API ENDPOINTS
 # ============================================
 
 @app.get("/")
@@ -77,7 +77,7 @@ async def home():
         "status": "🟢 PataBot is running!",
         "bot_name": "PataBot - الوكيل الذكي الشامل",
         "website": "patahogar.com",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "timestamp": datetime.now().isoformat(),
         "modules": {
             "product_manager": "✅ Active",
@@ -117,6 +117,89 @@ async def fetch_new_products():
     return result
 
 
+@app.get("/api/products/enrich")
+async def enrich_products():
+    """تشغيل enrichment يدوياً — جلب الصور والأسماء لكل المنتجات"""
+    if not product_manager.products_cache:
+        return {"error": "No products cached. Call /api/products/fetch first."}
+    
+    # Get current status
+    status = product_manager.get_enrichment_status()
+    
+    if product_manager.enrichment_running:
+        return {
+            "status": "Enrichment already running",
+            "progress": status
+        }
+    
+    # Start enrichment
+    asyncio.create_task(product_manager._enrich_all_products())
+    
+    return {
+        "status": "Enrichment started!",
+        "total_products": status["total_products"],
+        "already_enriched": status["enriched"],
+        "message": "Check /api/products/enrichment-status for progress"
+    }
+
+
+@app.get("/api/products/enrichment-status")
+async def enrichment_status():
+    """حالة الـ enrichment"""
+    return product_manager.get_enrichment_status()
+
+
+@app.get("/api/products/test-images/{product_id}")
+async def test_product_images(product_id: int):
+    """اختبار جلب صور منتج واحد من BigBuy — للتشخيص"""
+    import httpx
+    api_key = os.environ.get("BIGBUY_API_KEY", "")
+    if not api_key:
+        return {"error": "No API key"}
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    
+    results = {}
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Test 1: Product images endpoint
+        try:
+            url = f"https://api.bigbuy.eu/rest/catalog/productimages/{product_id}.json"
+            r = await client.get(url, headers=headers)
+            results["images_endpoint"] = {
+                "url": url,
+                "status": r.status_code,
+                "response_type": str(type(r.json()).__name__) if r.status_code == 200 else None,
+                "response_preview": r.text[:1000] if r.status_code == 200 else r.text[:500]
+            }
+        except Exception as e:
+            results["images_endpoint"] = {"error": str(e)}
+        
+        await asyncio.sleep(2)
+        
+        # Test 2: Product information endpoint
+        try:
+            url = f"https://api.bigbuy.eu/rest/catalog/productinformation/{product_id}.json"
+            r = await client.get(url, headers=headers)
+            results["info_endpoint"] = {
+                "url": url,
+                "status": r.status_code,
+                "response_type": str(type(r.json()).__name__) if r.status_code == 200 else None,
+                "response_preview": r.text[:1000] if r.status_code == 200 else r.text[:500]
+            }
+        except Exception as e:
+            results["info_endpoint"] = {"error": str(e)}
+    
+    return {
+        "product_id": product_id,
+        "test_results": results
+    }
+
+
 @app.get("/api/test-bigbuy")
 async def test_bigbuy():
     """اختبار سريع للاتصال بـ BigBuy API"""
@@ -129,7 +212,6 @@ async def test_bigbuy():
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Test 1: Get categories
         try:
             r = await client.get("https://api.bigbuy.eu/rest/catalog/categories.json",
                                 headers=headers, params={"pageSize": 5})
@@ -137,21 +219,12 @@ async def test_bigbuy():
         except Exception as e:
             results["categories"] = {"error": str(e)}
         
-        # Test 2: Get products  
         try:
             r = await client.get("https://api.bigbuy.eu/rest/catalog/products.json",
                                 headers=headers, params={"pageSize": 3, "page": 1})
             results["products"] = {"status": r.status_code, "sample": r.text[:500]}
         except Exception as e:
             results["products"] = {"error": str(e)}
-        
-        # Test 3: Get prices
-        try:
-            r = await client.get("https://api.bigbuy.eu/rest/catalog/productsprices.json",
-                                headers=headers, params={"pageSize": 3, "page": 1})
-            results["prices"] = {"status": r.status_code, "sample": r.text[:500]}
-        except Exception as e:
-            results["prices"] = {"error": str(e)}
     
     return {"test": "BigBuy API Connection Test", "results": results}
 
@@ -237,7 +310,7 @@ async def daily_report():
 
 @app.post("/api/chat")
 async def chat_with_bot(request: Request):
-    """التواصل المباشر مع PataBot - محمد يتكلم مع الوكيل"""
+    """التواصل المباشر مع PataBot"""
     data = await request.json()
     message = data.get("message", "")
     response = await process_chat_message(message)
@@ -245,29 +318,19 @@ async def chat_with_bot(request: Request):
 
 
 # ============================================
-# AUTOMATED TASKS - المهام التلقائية
+# AUTOMATED TASKS
 # ============================================
 
 async def daily_product_update():
     """تحديث يومي للمنتجات"""
     logger.info("🔄 Starting daily product update...")
     try:
-        # 1. بحث عن منتجات رائجة
         trending = await research_manager.analyze_market_trends()
-        
-        # 2. جلب منتجات مربحة من BigBuy
         new_products = await product_manager.fetch_profitable_products()
-        
-        # 3. تحديث الأسعار والمخزون
         await product_manager.update_inventory_and_prices()
-        
-        # 4. إزالة المنتجات غير المتوفرة
         await product_manager.remove_unavailable_products()
-        
-        # 5. تحديث الموقع
         await website_manager.update_website_products()
-        
-        logger.info(f"✅ Daily product update complete. New products: {len(new_products.get('products', []))}")
+        logger.info(f"✅ Daily product update complete")
     except Exception as e:
         logger.error(f"❌ Daily product update failed: {e}")
 
@@ -276,18 +339,10 @@ async def daily_marketing_tasks():
     """مهام تسويقية يومية"""
     logger.info("📢 Starting daily marketing tasks...")
     try:
-        # 1. إنشاء محتوى مجاني لأفضل المنتجات
         await marketing_manager.create_organic_content()
-        
-        # 2. نشر على كل المنصات (مجاني)
         await marketing_manager.post_to_all_platforms()
-        
-        # 3. تحليل أداء الإعلانات السابقة
         await marketing_manager.analyze_ad_performance()
-        
-        # 4. اقتراح إعلانات مدفوعة جديدة (تحتاج موافقة محمد)
         await marketing_manager.suggest_new_paid_ads()
-        
         logger.info("✅ Daily marketing tasks complete")
     except Exception as e:
         logger.error(f"❌ Daily marketing tasks failed: {e}")
@@ -327,7 +382,7 @@ async def send_daily_report():
 
 
 # ============================================
-# CHAT SYSTEM - نظام التواصل مع محمد
+# CHAT SYSTEM
 # ============================================
 
 async def process_chat_message(message: str) -> str:
@@ -353,6 +408,10 @@ async def process_chat_message(message: str) -> str:
         status = await security_manager.get_security_status()
         return f"حالة الأمان: {status.get('status', 'جيد')} ✅"
     
+    elif any(word in message_lower for word in ['enrichment', 'صور', 'images']):
+        status = product_manager.get_enrichment_status()
+        return f"حالة الصور: {status['with_images']}/{status['total_products']} منتج مع صور. التقدم: {status['progress_pct']}%"
+    
     elif any(word in message_lower for word in ['مرحبا', 'hello', 'hola', 'hi']):
         return "مرحباً محمد! أنا PataBot جاهز لخدمتك. كيف أساعدك اليوم؟ 🐾"
     
@@ -363,7 +422,8 @@ async def process_chat_message(message: str) -> str:
             "- 📢 التسويق (اكتب: إعلان)\n"
             "- 📋 الطلبات (اكتب: طلب)\n"
             "- 📊 التقارير (اكتب: تقرير)\n"
-            "- 🔒 الأمان (اكتب: أمان)"
+            "- 🔒 الأمان (اكتب: أمان)\n"
+            "- 🖼️ حالة الصور (اكتب: صور)"
         )
 
 
@@ -373,11 +433,13 @@ async def process_chat_message(message: str) -> str:
 
 async def get_all_stats():
     """جمع إحصائيات كل الأقسام"""
+    enrichment = product_manager.get_enrichment_status()
     return {
         "products": {
             "total": await product_manager.get_product_count(),
-            "new_today": 0,
-            "out_of_stock_removed": 0
+            "enriched": enrichment["enriched"],
+            "with_images": enrichment["with_images"],
+            "enrichment_progress": f"{enrichment['progress_pct']}%"
         },
         "orders": {
             "total": 0,
@@ -409,28 +471,33 @@ async def get_all_stats():
 async def startup():
     """بدء PataBot وجميع المهام التلقائية"""
     logger.info("🚀 PataBot is starting up...")
-    logger.info("🐾 PataHogar.com Smart Agent v1.0.0")
+    logger.info("🐾 PataHogar.com Smart Agent v1.1.0")
     logger.info(f"📅 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Schedule automated tasks
-    # تحديث المنتجات يومياً الساعة 6 صباحاً
     scheduler.add_job(daily_product_update, 'cron', hour=6, minute=0)
-    
-    # مهام التسويق يومياً الساعة 9 صباحاً
     scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)
-    
-    # خدمة العملاء كل 3 ساعات
     scheduler.add_job(daily_customer_service, 'interval', hours=3)
-    
-    # فحص أمني كل ساعة
     scheduler.add_job(hourly_security_check, 'interval', hours=1)
-    
-    # التقرير اليومي الساعة 10 مساءً
     scheduler.add_job(send_daily_report, 'cron', hour=22, minute=0)
     
     scheduler.start()
     logger.info("✅ All scheduled tasks are active!")
     logger.info("✅ PataBot is fully operational! 🐾🏠")
+    
+    # Auto-fetch products on startup
+    logger.info("📦 Auto-fetching products from BigBuy...")
+    asyncio.create_task(auto_startup_fetch())
+
+
+async def auto_startup_fetch():
+    """Fetch products and start enrichment automatically on startup."""
+    try:
+        await asyncio.sleep(3)  # Wait for app to be fully ready
+        await product_manager.fetch_profitable_products()
+        logger.info("✅ Products fetched and enrichment started automatically!")
+    except Exception as e:
+        logger.error(f"❌ Auto-fetch failed: {e}")
 
 
 @app.on_event("shutdown")
