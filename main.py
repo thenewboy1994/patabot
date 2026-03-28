@@ -18,6 +18,7 @@ import logging
 from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # Import all modules
@@ -41,6 +42,15 @@ app = FastAPI(
     title="PataBot - PataHogar.com Smart Agent",
     description="الوكيل الذكي الشامل لإدارة متجر PataHogar.com",
     version="1.0.0"
+)
+
+# CORS — Allow patahogar.com to connect
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://patahogar.com", "https://www.patahogar.com", "http://patahogar.com", "http://www.patahogar.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize all managers
