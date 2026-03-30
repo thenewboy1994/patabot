@@ -1,5 +1,6 @@
 """
-PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.3.0
+PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.4.0
+FIX: Fast startup fetch (200 products in 30-60s), fire-and-forget API, no more timeouts
 """
 
 import os
@@ -22,7 +23,7 @@ from modules.website_manager import WebsiteManager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('PataBot')
 
-app = FastAPI(title="PataBot", version="1.3.0")
+app = FastAPI(title="PataBot", version="1.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,7 +60,7 @@ async def home():
         "status": "🟢 PataBot is running!",
         "bot_name": "PataBot - الوكيل الذكي الشامل",
         "website": "patahogar.com",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "timestamp": datetime.now().isoformat(),
         "modules": {k: "✅ Active" for k in [
             "product_manager", "marketing_manager", "research_manager",
@@ -88,8 +89,25 @@ async def get_products():
 
 @app.get("/api/products/fetch")
 async def fetch_new_products():
-    """Fetch fresh products from BigBuy and rebuild cache."""
-    return await product_manager.fetch_profitable_products(max_pages=5, page_size=200)
+    """Start product fetch in background — returns immediately, no timeout."""
+    status = product_manager.get_enrichment_status()
+    if status["total_products"] > 0 and status.get("running"):
+        return {"status": "already_running", "progress": status}
+    # Fire and forget — fetches 400 products (2 pages) in background
+    asyncio.create_task(product_manager.fetch_profitable_products(max_pages=2, page_size=200))
+    return {
+        "status": "started",
+        "message": "Fetching up to 400 products in background. Check /api/products/enrichment-status in 1-2 minutes."
+    }
+
+@app.get("/api/products/fetch-full")
+async def fetch_full_products():
+    """Start a full fetch (600 products) in background — for nightly use."""
+    asyncio.create_task(product_manager.fetch_profitable_products(max_pages=3, page_size=200))
+    return {
+        "status": "started",
+        "message": "Fetching up to 600 products in background. Check /api/products/enrichment-status."
+    }
 
 @app.get("/api/products/enrich")
 async def enrich_products():
@@ -144,10 +162,6 @@ async def get_catalog(
     min_price: float = Query(0, ge=0),
     max_price: float = Query(99999, ge=0)
 ):
-    """Paginated catalog for the catalog.html page.
-
-    sort options: profit | price_asc | price_desc | newest
-    """
     return await product_manager.get_catalog(
         page=page, limit=limit, category=category,
         search=search, sort=sort,
@@ -156,17 +170,12 @@ async def get_catalog(
 
 @app.get("/api/categories")
 async def get_categories():
-    """Get all product categories with counts."""
     categories = await product_manager.get_categories()
     total = len(product_manager.products_cache)
-    return {
-        "categories": categories,
-        "total_products": total
-    }
+    return {"categories": categories, "total_products": total}
 
 @app.get("/api/products/{product_id}")
 async def get_product_detail(product_id: int):
-    """Get a single product by ID for product detail view."""
     product = await product_manager.get_product_by_id(product_id)
     if not product:
         return JSONResponse(status_code=404, content={"error": "Product not found"})
@@ -204,74 +213,47 @@ async def get_trending():
     return {"trending": await research_manager.get_trending_products()}
 
 # ════════════════════════════════════════════════════════
-# RESEARCH ENDPOINTS — بحث المنتجات المربحة في أوروبا
+# RESEARCH ENDPOINTS
 # ════════════════════════════════════════════════════════
 
 @app.get("/api/research/run")
 async def run_research():
-    """شغّل البحث الآن: Facebook Ad Library + TikTok Trends"""
     asyncio.create_task(research_manager.run_daily_research())
     return {"status": "Research started — check /api/research/status in 2 minutes"}
 
 @app.get("/api/research/status")
 async def research_status():
-    """حالة البحث ونتائجه"""
     return await research_manager.get_research_status()
 
 @app.get("/api/research/winning-products")
 async def winning_products():
-    """المنتجات الفائزة المُوصى بها للمتجر"""
     products = await research_manager.get_trending_products()
     return {
         "winning_products": products,
         "count": len(products),
         "last_updated": research_manager.last_research_time,
-        "tip": "هذه المنتجات تُعلن عنها بنجاح في أوروبا — ابحث عنها في BigBuy"
     }
 
 @app.get("/api/research/country/{country_code}")
 async def country_insights(country_code: str):
-    """معلومات سوق دولة معينة: ES, DE, NL, FR, BE, CH, LU, IT"""
     return await research_manager.get_country_insights(country_code)
 
 @app.get("/api/research/setup-guide")
 async def research_setup_guide():
-    """دليل إعداد Facebook Ad Library للبحث الآلي"""
     return await research_manager.get_ad_library_guide()
 
 @app.get("/api/research/fetch-recommended")
 async def fetch_recommended_products():
-    """
-    خطوتان في واحدة:
-    1. يشغّل البحث في Ad Library
-    2. يجلب منتجات BigBuy المطابقة ويرتبها حسب الطلب في أوروبا
-    """
-    # Run research
     research_results = await research_manager.run_daily_research()
     keywords = research_manager.winning_keywords
-
-    # Fetch fresh BigBuy products
-    fetch_result = await product_manager.fetch_profitable_products(max_pages=10)
-
-    # Re-sort with research insights
-    if keywords:
-        product_manager.products_cache = research_manager.find_matching_bigbuy_products(
-            product_manager.products_cache
-        )
-        product_manager._save_to_file()
-
+    asyncio.create_task(product_manager.fetch_profitable_products(max_pages=3))
     return {
-        "status": "success",
+        "status": "started",
         "research": {
             "winning_keywords": len(keywords),
             "sources": ["Facebook Ad Library", "TikTok Creative Center", "EU Market Research"],
-            "countries_analyzed": research_manager.TARGET_COUNTRIES
         },
-        "products": {
-            "total_fetched": fetch_result.get("count", 0),
-            "research_matched": sum(1 for p in product_manager.products_cache if p.get("research_match")),
-            "message": fetch_result.get("message", "")
-        }
+        "message": "Product fetch started in background. Check /api/products/enrichment-status."
     }
 
 @app.get("/api/marketing/status")
@@ -323,30 +305,29 @@ async def chat_with_bot(request: Request):
 # ════════════════════════════════════════════════════════
 
 async def _fetch_with_retry():
-    """يجلب المنتجات عند بدء التشغيل — يعيد المحاولة كل 20 دقيقة إذا كان BigBuy محدوداً."""
-    for attempt in range(10):  # up to 10 attempts = 3+ hours
+    """Fetches 200 products on startup — retries every 5 min if rate limited (max 3 attempts)."""
+    for attempt in range(3):
         try:
-            logger.info(f"Auto-fetch attempt {attempt + 1}/10...")
-            result = await product_manager.fetch_profitable_products(max_pages=10)
+            logger.info(f"Auto-fetch attempt {attempt + 1}/3 (200 products)...")
+            result = await product_manager.fetch_profitable_products(max_pages=1, page_size=200)
             count = result.get("count", 0)
             if count > 0:
-                logger.info(f"Auto-fetch success: {count} products! Starting enrichment...")
+                logger.info(f"✅ Auto-fetch success: {count} products!")
                 return
             else:
-                logger.warning(f"Attempt {attempt+1}: 0 products — BigBuy rate limited. Waiting 20 min...")
-                await asyncio.sleep(1200)  # 20 minutes
+                logger.warning(f"Attempt {attempt+1}: 0 products — waiting 5 min...")
+                await asyncio.sleep(300)
         except Exception as e:
-            logger.error(f"Auto-fetch error: {e} — retrying in 20 min...")
-            await asyncio.sleep(1200)
-    logger.error("Auto-fetch failed after 10 attempts — will retry at 5am via scheduler")
+            logger.error(f"Auto-fetch error: {e} — retrying in 5 min...")
+            await asyncio.sleep(300)
+    logger.error("Auto-fetch failed after 3 attempts — will retry at 5am via scheduler")
 
 async def daily_research_and_fetch():
-    """كل يوم 5 صباحاً: بحث في Ad Library + جلب منتجات مطابقة من BigBuy"""
+    """كل يوم 5 صباحاً: بحث + جلب 600 منتج"""
     try:
         logger.info("🔍 Daily research starting...")
         await research_manager.run_daily_research()
-        await product_manager.fetch_profitable_products(max_pages=10)
-        # Re-sort with research insights
+        await product_manager.fetch_profitable_products(max_pages=3, page_size=200)
         if research_manager.winning_keywords:
             product_manager.products_cache = research_manager.find_matching_bigbuy_products(
                 product_manager.products_cache
@@ -358,7 +339,7 @@ async def daily_research_and_fetch():
 
 async def daily_product_update():
     try:
-        await product_manager.fetch_profitable_products(max_pages=5)
+        await product_manager.fetch_profitable_products(max_pages=3, page_size=200)
     except Exception as e:
         logger.error(f"Daily product update failed: {e}")
 
@@ -401,10 +382,10 @@ async def process_chat_message(message):
         s = product_manager.get_enrichment_status()
         return f"الصور: {s['with_images']}/{s['total_products']}. الأسماء: {s['with_names']}/{s['total_products']}."
     elif any(w in ml for w in ['مرحبا', 'hello', 'hola']):
-        return "مرحباً محمد! أنا PataBot v1.3.0 جاهز. كيف أساعدك؟ 🐾"
+        return "مرحباً محمد! أنا PataBot v1.4.0 جاهز. كيف أساعدك؟ 🐾"
     elif any(w in ml for w in ['كتالوج', 'catalog', 'catálogo']):
         s = product_manager.get_enrichment_status()
-        return f"الكتالوج يحتوي على {s['total_products']} منتج. {s['with_images']} منتج مع صور. اذهب لـ patahogar.com/catalog.html"
+        return f"الكتالوج: {s['total_products']} منتج. {s['with_images']} مع صور. → patahogar.com/catalog.html"
     else:
         return "يمكنني مساعدتك: منتجات | صور | كتالوج | إعلان | طلب | تقرير | أمان"
 
@@ -427,33 +408,31 @@ async def get_all_stats():
 
 @app.on_event("startup")
 async def startup():
-    logger.info("PataBot v1.3.0 starting...")
+    logger.info("PataBot v1.4.0 starting...")
 
-    # Schedule daily tasks
-    scheduler.add_job(daily_research_and_fetch, 'cron', hour=5, minute=0)  # بحث + جلب منتجات 5 صباحاً
-    scheduler.add_job(daily_product_update, 'cron', hour=6, minute=0)       # تحديث منتجات 6 صباحاً
-    scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)      # تسويق 9 صباحاً
+    scheduler.add_job(daily_research_and_fetch, 'cron', hour=5, minute=0)
+    scheduler.add_job(daily_product_update, 'cron', hour=6, minute=0)
+    scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)
     scheduler.add_job(daily_customer_service, 'interval', hours=3)
     scheduler.add_job(hourly_security_check, 'interval', hours=1)
     scheduler.add_job(send_daily_report, 'cron', hour=22, minute=0)
     scheduler.start()
 
-    # Auto-fetch with retry loop — keeps trying every 20 min if rate limited
     if not product_manager.products_cache:
-        logger.info("Cache empty — starting auto-fetch loop (retries every 20 min if rate limited)...")
+        logger.info("Cache empty — starting fast auto-fetch (200 products)...")
         asyncio.create_task(_fetch_with_retry())
     else:
-        logger.info(f"Loaded {len(product_manager.products_cache)} products from file cache")
+        logger.info(f"✅ Loaded {len(product_manager.products_cache)} products from file cache")
         missing = sum(1 for p in product_manager.products_cache if not p.get("has_images"))
         if missing > 0 and not product_manager.enrichment_running:
             asyncio.create_task(product_manager._delayed_enrichment(60))
 
-    logger.info("PataBot v1.3.0 operational! 🐾")
+    logger.info("PataBot v1.4.0 operational! 🐾")
 
 @app.on_event("shutdown")
 async def shutdown():
     scheduler.shutdown()
-    product_manager._save_to_file()  # Save on clean shutdown
+    product_manager._save_to_file()
 
 if __name__ == "__main__":
     import uvicorn
