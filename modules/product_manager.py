@@ -1,9 +1,10 @@
 """
-PataBot — Product Manager v6 FINAL
+PataBot — Product Manager v6.1
 - JSON persistence (survives restarts)
 - Fetches up to 1000 products from BigBuy
 - Catalog API with pagination, search, filter, sort
 - Reliable image/name enrichment (each product matches its own images)
+- v6.1: Category names from BigBuy taxonomy
 """
 
 import httpx
@@ -28,6 +29,7 @@ class ProductManager:
         self.orders = []
         self.enrichment_running = False
         self.last_fetch_time = None
+        self.category_names = {}  # {category_id: name}
         self.headers = {
             "Authorization": f"Bearer {BIGBUY_API_KEY}",
             "Accept": "application/json",
@@ -38,22 +40,22 @@ class ProductManager:
     # ─── Persistence ───
 
     def _load_from_file(self):
-        """Load products from JSON cache file (survives process restarts)."""
         try:
             if CACHE_FILE.exists():
                 data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
                 self.products_cache = data.get("products", [])
                 self.last_fetch_time = data.get("last_fetch_time")
+                self.category_names = data.get("category_names", {})
                 logger.info(f"Loaded {len(self.products_cache)} products from cache file")
         except Exception as e:
             logger.error(f"Cache load error: {e}")
 
     def _save_to_file(self):
-        """Save products to JSON cache file."""
         try:
             data = {
                 "products": self.products_cache,
                 "last_fetch_time": self.last_fetch_time,
+                "category_names": self.category_names,
                 "saved_at": datetime.now().isoformat()
             }
             CACHE_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -72,14 +74,13 @@ class ProductManager:
             return 1.30
 
     async def _api_get(self, client, url, params=None, retries=3):
-        """API call with smart rate-limit handling — waits up to 15 min on 429."""
         for attempt in range(retries):
             try:
                 resp = await client.get(url, headers=self.headers, params=params)
                 if resp.status_code == 200:
                     return resp.json()
                 if resp.status_code == 429:
-                    wait = 900 if attempt == 0 else 300  # 15 min first, then 5 min
+                    wait = 900 if attempt == 0 else 300
                     logger.warning(f"429 Rate Limited (attempt {attempt+1}/{retries}) — waiting {wait}s...")
                     await asyncio.sleep(wait)
                     continue
@@ -91,14 +92,43 @@ class ProductManager:
                     await asyncio.sleep(10)
         return None
 
+    # ─── Taxonomy Names ───
+
+    async def _fetch_taxonomy_names(self, client):
+        """Fetch BigBuy taxonomy/category names and cache them."""
+        data = await self._api_get(client, f"{BIGBUY_BASE}/rest/catalog/taxonomies.json")
+        if data and isinstance(data, list) and len(data) > 0:
+            for item in data:
+                tid = str(item.get("id", ""))
+                name = item.get("name", "").strip()
+                if tid and name:
+                    self.category_names[tid] = name
+            logger.info(f"Loaded {len(self.category_names)} taxonomy names from BigBuy")
+        else:
+            # Fallback: try categories endpoint
+            data2 = await self._api_get(client, f"{BIGBUY_BASE}/rest/catalog/categories.json",
+                                        params={"pageSize": 200})
+            if data2 and isinstance(data2, list):
+                for item in data2:
+                    cid = str(item.get("id", ""))
+                    name = item.get("name", "").strip()
+                    if cid and name:
+                        self.category_names[cid] = name
+                logger.info(f"Loaded {len(self.category_names)} category names from BigBuy")
+
     # ─── Fetch Products from BigBuy ───
 
     async def fetch_profitable_products(self, max_pages=10, page_size=200):
-        """Fetch products from BigBuy. max_pages=5, page_size=200 = up to 1000 products."""
         all_products = []
         errors = []
 
         async with httpx.AsyncClient(timeout=60.0) as client:
+
+            # Fetch taxonomy names if not cached
+            if not self.category_names:
+                await self._fetch_taxonomy_names(client)
+                await asyncio.sleep(2)
+
             for page in range(1, max_pages + 1):
                 url = f"{BIGBUY_BASE}/rest/catalog/products.json"
                 data = await self._api_get(client, url, {"pageSize": page_size, "page": page})
@@ -112,10 +142,6 @@ class ProductManager:
                         continue
                     wp = float(wp)
 
-                    # ── Dropshipping price filter ──
-                    # Only products €2–€80 wholesale are good for this store.
-                    # Avoids electronics, appliances, luxury items (>€80).
-                    # Avoids items too cheap to be worth selling (<€2).
                     if wp < 2.0 or wp > 80.0:
                         continue
 
@@ -123,7 +149,6 @@ class ProductManager:
                     sp = round(wp * m, 2)
                     pid = item.get("id")
 
-                    # Preserve existing enrichment data if product already in cache
                     existing = next((p for p in self.products_cache if p["id"] == pid), None)
                     if existing:
                         existing["wholesale_price"] = wp
@@ -152,19 +177,16 @@ class ProductManager:
 
                 logger.info(f"Page {page}: {len(data)} products fetched")
                 if len(data) < page_size:
-                    break  # Last page
+                    break
                 if page < max_pages:
                     await asyncio.sleep(3)
 
-        # Sort by margin % first (best deal for customer), then by selling price
-        # This puts affordable high-margin products first — ideal for dropshipping
         all_products.sort(key=lambda x: (x["margin_pct"], -x["selling_price"]), reverse=True)
-        self.products_cache = all_products[:2000]  # Keep up to 2000 products
+        self.products_cache = all_products[:2000]
         self.last_fetch_time = datetime.now().isoformat()
         self._save_to_file()
         logger.info(f"Cached {len(self.products_cache)} products total")
 
-        # Start enrichment after 5 minute delay (let rate limit reset)
         asyncio.create_task(self._delayed_enrichment(300))
 
         return {
@@ -182,8 +204,6 @@ class ProductManager:
         await self._enrich_products()
 
     async def _enrich_products(self):
-        """Enrich products with real images and names from BigBuy API.
-        Each product ID fetches its OWN images — no mixing."""
         if self.enrichment_running:
             logger.info("Enrichment already running, skipping")
             return
@@ -192,15 +212,13 @@ class ProductManager:
         name_count = 0
 
         try:
-            # Enrich all products that still need images (up to 1000)
             to_enrich = [p for p in self.products_cache[:1000] if not p.get("has_images")]
             logger.info(f"Enriching {len(to_enrich)} products...")
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for i, product in enumerate(to_enrich):
-                    pid = product["id"]  # Use THIS product's ID for its images
+                    pid = product["id"]
 
-                    # Fetch THIS product's images
                     img_data = await self._api_get(
                         client,
                         f"{BIGBUY_BASE}/rest/catalog/productimages/{pid}.json"
@@ -209,13 +227,12 @@ class ProductManager:
                         urls = self._parse_images(img_data)
                         if urls:
                             product["images"] = urls
-                            product["image_url"] = urls[0]  # Cover image first
+                            product["image_url"] = urls[0]
                             product["has_images"] = True
                             img_count += 1
 
                     await asyncio.sleep(2)
 
-                    # Fetch THIS product's name and description
                     if not product.get("has_names"):
                         info_data = await self._api_get(
                             client,
@@ -237,19 +254,18 @@ class ProductManager:
 
                     if (i + 1) % 20 == 0:
                         logger.info(f"Enrichment: {i+1}/{len(to_enrich)} | Images: {img_count} | Names: {name_count}")
-                        self._save_to_file()  # Save progress every 20 products
+                        self._save_to_file()
 
             logger.info(f"ENRICHMENT COMPLETE: {img_count} images, {name_count} names")
             self._save_to_file()
 
         except Exception as e:
             logger.error(f"Enrichment error: {e}")
-            self._save_to_file()  # Save whatever we got
+            self._save_to_file()
         finally:
             self.enrichment_running = False
 
     async def run_enrichment(self):
-        """Manually trigger enrichment via API."""
         if not self.products_cache:
             return {"error": "No products cached. Call /api/products/fetch first."}
         if self.enrichment_running:
@@ -265,7 +281,6 @@ class ProductManager:
     # ─── Image & Name Parsers ───
 
     def _parse_images(self, data):
-        """Parse BigBuy productimages response. Returns URLs, cover image first."""
         cover = []
         others = []
         try:
@@ -286,7 +301,6 @@ class ProductManager:
         return cover + others
 
     def _parse_info(self, data):
-        """Parse BigBuy productinformation response. Returns {lang_code: {name, description}}."""
         descs = {}
         try:
             if isinstance(data, list):
@@ -306,10 +320,8 @@ class ProductManager:
     # ─── Catalog API ───
 
     async def get_catalog(self, page=1, limit=48, category="", search="", sort="profit", min_price=0, max_price=99999):
-        """Paginated catalog with filtering and sorting."""
         products = [self._fmt(p) for p in self.products_cache]
 
-        # Apply filters
         if category and category != "all":
             products = [p for p in products if p.get("category") == category]
 
@@ -321,14 +333,13 @@ class ProductManager:
 
         products = [p for p in products if min_price <= p["selling_price"] <= max_price]
 
-        # Apply sort
         if sort == "price_asc":
             products.sort(key=lambda x: x["selling_price"])
         elif sort == "price_desc":
             products.sort(key=lambda x: x["selling_price"], reverse=True)
         elif sort == "newest":
             products.sort(key=lambda x: x["id"], reverse=True)
-        else:  # profit (default — most profitable first)
+        else:
             products.sort(key=lambda x: x["profit"], reverse=True)
 
         total = len(products)
@@ -345,16 +356,22 @@ class ProductManager:
         }
 
     async def get_categories(self):
-        """Get all categories with product counts."""
+        """Get all categories with product counts and names."""
         cats = {}
         for p in self.products_cache:
             cat = p.get("category", "")
             if cat:
                 cats[cat] = cats.get(cat, 0) + 1
-        return [{"id": k, "count": v} for k, v in sorted(cats.items(), key=lambda x: x[1], reverse=True)[:50]]
+        return [
+            {
+                "id": k,
+                "name": self.category_names.get(k, ""),
+                "count": v
+            }
+            for k, v in sorted(cats.items(), key=lambda x: x[1], reverse=True)[:50]
+        ]
 
     async def get_product_by_id(self, product_id):
-        """Get a single product by ID."""
         for p in self.products_cache:
             if p["id"] == product_id:
                 return self._fmt(p)
