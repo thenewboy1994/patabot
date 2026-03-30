@@ -322,6 +322,24 @@ async def chat_with_bot(request: Request):
 # SCHEDULED TASKS
 # ════════════════════════════════════════════════════════
 
+async def _fetch_with_retry():
+    """يجلب المنتجات عند بدء التشغيل — يعيد المحاولة كل 20 دقيقة إذا كان BigBuy محدوداً."""
+    for attempt in range(10):  # up to 10 attempts = 3+ hours
+        try:
+            logger.info(f"Auto-fetch attempt {attempt + 1}/10...")
+            result = await product_manager.fetch_profitable_products(max_pages=10)
+            count = result.get("count", 0)
+            if count > 0:
+                logger.info(f"Auto-fetch success: {count} products! Starting enrichment...")
+                return
+            else:
+                logger.warning(f"Attempt {attempt+1}: 0 products — BigBuy rate limited. Waiting 20 min...")
+                await asyncio.sleep(1200)  # 20 minutes
+        except Exception as e:
+            logger.error(f"Auto-fetch error: {e} — retrying in 20 min...")
+            await asyncio.sleep(1200)
+    logger.error("Auto-fetch failed after 10 attempts — will retry at 5am via scheduler")
+
 async def daily_research_and_fetch():
     """كل يوم 5 صباحاً: بحث في Ad Library + جلب منتجات مطابقة من BigBuy"""
     try:
@@ -420,15 +438,14 @@ async def startup():
     scheduler.add_job(send_daily_report, 'cron', hour=22, minute=0)
     scheduler.start()
 
-    # Auto-fetch products if cache is empty (happens after new deploy)
+    # Auto-fetch with retry loop — keeps trying every 20 min if rate limited
     if not product_manager.products_cache:
-        logger.info("Cache empty — auto-fetching products on startup (10 pages = up to 2000 products)...")
-        asyncio.create_task(product_manager.fetch_profitable_products(max_pages=10))
+        logger.info("Cache empty — starting auto-fetch loop (retries every 20 min if rate limited)...")
+        asyncio.create_task(_fetch_with_retry())
     else:
         logger.info(f"Loaded {len(product_manager.products_cache)} products from file cache")
         missing = sum(1 for p in product_manager.products_cache if not p.get("has_images"))
         if missing > 0 and not product_manager.enrichment_running:
-            logger.info(f"{missing} products missing images — scheduling enrichment...")
             asyncio.create_task(product_manager._delayed_enrichment(60))
 
     logger.info("PataBot v1.3.0 operational! 🐾")

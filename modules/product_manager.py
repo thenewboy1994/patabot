@@ -71,21 +71,25 @@ class ProductManager:
         else:
             return 1.30
 
-    async def _api_get(self, client, url, params=None):
-        try:
-            resp = await client.get(url, headers=self.headers, params=params)
-            if resp.status_code == 200:
-                return resp.json()
-            if resp.status_code == 429:
-                logger.warning(f"429 Rate Limited: {url} — waiting 30s")
-                await asyncio.sleep(30)
-                resp2 = await client.get(url, headers=self.headers, params=params)
-                if resp2.status_code == 200:
-                    return resp2.json()
-            return None
-        except Exception as e:
-            logger.error(f"API error: {url} — {e}")
-            return None
+    async def _api_get(self, client, url, params=None, retries=3):
+        """API call with smart rate-limit handling — waits up to 15 min on 429."""
+        for attempt in range(retries):
+            try:
+                resp = await client.get(url, headers=self.headers, params=params)
+                if resp.status_code == 200:
+                    return resp.json()
+                if resp.status_code == 429:
+                    wait = 900 if attempt == 0 else 300  # 15 min first, then 5 min
+                    logger.warning(f"429 Rate Limited (attempt {attempt+1}/{retries}) — waiting {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                logger.warning(f"HTTP {resp.status_code}: {url}")
+                return None
+            except Exception as e:
+                logger.error(f"API error: {url} — {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(10)
+        return None
 
     # ─── Fetch Products from BigBuy ───
 
