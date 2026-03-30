@@ -203,6 +203,77 @@ async def test_bigbuy():
 async def get_trending():
     return {"trending": await research_manager.get_trending_products()}
 
+# ════════════════════════════════════════════════════════
+# RESEARCH ENDPOINTS — بحث المنتجات المربحة في أوروبا
+# ════════════════════════════════════════════════════════
+
+@app.get("/api/research/run")
+async def run_research():
+    """شغّل البحث الآن: Facebook Ad Library + TikTok Trends"""
+    asyncio.create_task(research_manager.run_daily_research())
+    return {"status": "Research started — check /api/research/status in 2 minutes"}
+
+@app.get("/api/research/status")
+async def research_status():
+    """حالة البحث ونتائجه"""
+    return await research_manager.get_research_status()
+
+@app.get("/api/research/winning-products")
+async def winning_products():
+    """المنتجات الفائزة المُوصى بها للمتجر"""
+    products = await research_manager.get_trending_products()
+    return {
+        "winning_products": products,
+        "count": len(products),
+        "last_updated": research_manager.last_research_time,
+        "tip": "هذه المنتجات تُعلن عنها بنجاح في أوروبا — ابحث عنها في BigBuy"
+    }
+
+@app.get("/api/research/country/{country_code}")
+async def country_insights(country_code: str):
+    """معلومات سوق دولة معينة: ES, DE, NL, FR, BE, CH, LU, IT"""
+    return await research_manager.get_country_insights(country_code)
+
+@app.get("/api/research/setup-guide")
+async def research_setup_guide():
+    """دليل إعداد Facebook Ad Library للبحث الآلي"""
+    return await research_manager.get_ad_library_guide()
+
+@app.get("/api/research/fetch-recommended")
+async def fetch_recommended_products():
+    """
+    خطوتان في واحدة:
+    1. يشغّل البحث في Ad Library
+    2. يجلب منتجات BigBuy المطابقة ويرتبها حسب الطلب في أوروبا
+    """
+    # Run research
+    research_results = await research_manager.run_daily_research()
+    keywords = research_manager.winning_keywords
+
+    # Fetch fresh BigBuy products
+    fetch_result = await product_manager.fetch_profitable_products(max_pages=10)
+
+    # Re-sort with research insights
+    if keywords:
+        product_manager.products_cache = research_manager.find_matching_bigbuy_products(
+            product_manager.products_cache
+        )
+        product_manager._save_to_file()
+
+    return {
+        "status": "success",
+        "research": {
+            "winning_keywords": len(keywords),
+            "sources": ["Facebook Ad Library", "TikTok Creative Center", "EU Market Research"],
+            "countries_analyzed": research_manager.TARGET_COUNTRIES
+        },
+        "products": {
+            "total_fetched": fetch_result.get("count", 0),
+            "research_matched": sum(1 for p in product_manager.products_cache if p.get("research_match")),
+            "message": fetch_result.get("message", "")
+        }
+    }
+
 @app.get("/api/marketing/status")
 async def marketing_status():
     return await marketing_manager.get_campaigns_status()
@@ -250,6 +321,22 @@ async def chat_with_bot(request: Request):
 # ════════════════════════════════════════════════════════
 # SCHEDULED TASKS
 # ════════════════════════════════════════════════════════
+
+async def daily_research_and_fetch():
+    """كل يوم 5 صباحاً: بحث في Ad Library + جلب منتجات مطابقة من BigBuy"""
+    try:
+        logger.info("🔍 Daily research starting...")
+        await research_manager.run_daily_research()
+        await product_manager.fetch_profitable_products(max_pages=10)
+        # Re-sort with research insights
+        if research_manager.winning_keywords:
+            product_manager.products_cache = research_manager.find_matching_bigbuy_products(
+                product_manager.products_cache
+            )
+            product_manager._save_to_file()
+        logger.info("✅ Daily research + fetch complete")
+    except Exception as e:
+        logger.error(f"Daily research failed: {e}")
 
 async def daily_product_update():
     try:
@@ -325,8 +412,9 @@ async def startup():
     logger.info("PataBot v1.3.0 starting...")
 
     # Schedule daily tasks
-    scheduler.add_job(daily_product_update, 'cron', hour=6, minute=0)
-    scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)
+    scheduler.add_job(daily_research_and_fetch, 'cron', hour=5, minute=0)  # بحث + جلب منتجات 5 صباحاً
+    scheduler.add_job(daily_product_update, 'cron', hour=6, minute=0)       # تحديث منتجات 6 صباحاً
+    scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)      # تسويق 9 صباحاً
     scheduler.add_job(daily_customer_service, 'interval', hours=3)
     scheduler.add_job(hourly_security_check, 'interval', hours=1)
     scheduler.add_job(send_daily_report, 'cron', hour=22, minute=0)
