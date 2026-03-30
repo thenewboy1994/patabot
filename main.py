@@ -334,11 +334,10 @@ async def startup():
 
     # Auto-fetch products if cache is empty (happens after new deploy)
     if not product_manager.products_cache:
-        logger.info("Cache empty — auto-fetching products on startup...")
-        asyncio.create_task(product_manager.fetch_profitable_products(max_pages=5))
+        logger.info("Cache empty — auto-fetching products on startup (10 pages = up to 2000 products)...")
+        asyncio.create_task(product_manager.fetch_profitable_products(max_pages=10))
     else:
         logger.info(f"Loaded {len(product_manager.products_cache)} products from file cache")
-        # Continue enrichment if any products are missing images
         missing = sum(1 for p in product_manager.products_cache if not p.get("has_images"))
         if missing > 0 and not product_manager.enrichment_running:
             logger.info(f"{missing} products missing images — scheduling enrichment...")

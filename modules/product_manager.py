@@ -89,7 +89,7 @@ class ProductManager:
 
     # ─── Fetch Products from BigBuy ───
 
-    async def fetch_profitable_products(self, max_pages=5, page_size=200):
+    async def fetch_profitable_products(self, max_pages=10, page_size=200):
         """Fetch products from BigBuy. max_pages=5, page_size=200 = up to 1000 products."""
         all_products = []
         errors = []
@@ -104,37 +104,47 @@ class ProductManager:
 
                 for item in data:
                     wp = item.get("wholesalePrice")
-                    if wp and float(wp) > 0:
-                        wp = float(wp)
-                        m = self._get_margin(wp)
-                        sp = round(wp * m, 2)
-                        pid = item.get("id")
-                        # Preserve existing enrichment data if product already in cache
-                        existing = next((p for p in self.products_cache if p["id"] == pid), None)
-                        if existing:
-                            existing["wholesale_price"] = wp
-                            existing["selling_price"] = sp
-                            existing["old_price"] = round(sp * 1.23, 2)
-                            existing["profit"] = round(sp - wp, 2)
-                            all_products.append(existing)
-                        else:
-                            all_products.append({
-                                "id": pid,
-                                "sku": item.get("sku", ""),
-                                "name": item.get("name", f"Producto #{pid}"),
-                                "description": "",
-                                "wholesale_price": wp,
-                                "selling_price": sp,
-                                "old_price": round(sp * 1.23, 2),
-                                "profit": round(sp - wp, 2),
-                                "margin_pct": round((m - 1) * 100),
-                                "category": str(item.get("category", "")),
-                                "images": [],
-                                "image_url": "",
-                                "descriptions": {},
-                                "has_images": False,
-                                "has_names": False
-                            })
+                    if not wp or float(wp) <= 0:
+                        continue
+                    wp = float(wp)
+
+                    # ── Dropshipping price filter ──
+                    # Only products €2–€80 wholesale are good for this store.
+                    # Avoids electronics, appliances, luxury items (>€80).
+                    # Avoids items too cheap to be worth selling (<€2).
+                    if wp < 2.0 or wp > 80.0:
+                        continue
+
+                    m = self._get_margin(wp)
+                    sp = round(wp * m, 2)
+                    pid = item.get("id")
+
+                    # Preserve existing enrichment data if product already in cache
+                    existing = next((p for p in self.products_cache if p["id"] == pid), None)
+                    if existing:
+                        existing["wholesale_price"] = wp
+                        existing["selling_price"] = sp
+                        existing["old_price"] = round(sp * 1.23, 2)
+                        existing["profit"] = round(sp - wp, 2)
+                        all_products.append(existing)
+                    else:
+                        all_products.append({
+                            "id": pid,
+                            "sku": item.get("sku", ""),
+                            "name": item.get("name", f"Producto #{pid}"),
+                            "description": "",
+                            "wholesale_price": wp,
+                            "selling_price": sp,
+                            "old_price": round(sp * 1.23, 2),
+                            "profit": round(sp - wp, 2),
+                            "margin_pct": round((m - 1) * 100),
+                            "category": str(item.get("category", "")),
+                            "images": [],
+                            "image_url": "",
+                            "descriptions": {},
+                            "has_images": False,
+                            "has_names": False
+                        })
 
                 logger.info(f"Page {page}: {len(data)} products fetched")
                 if len(data) < page_size:
@@ -142,9 +152,10 @@ class ProductManager:
                 if page < max_pages:
                     await asyncio.sleep(3)
 
-        # Sort by profit, keep top 1000
-        all_products.sort(key=lambda x: x["profit"], reverse=True)
-        self.products_cache = all_products[:1000]
+        # Sort by margin % first (best deal for customer), then by selling price
+        # This puts affordable high-margin products first — ideal for dropshipping
+        all_products.sort(key=lambda x: (x["margin_pct"], -x["selling_price"]), reverse=True)
+        self.products_cache = all_products[:2000]  # Keep up to 2000 products
         self.last_fetch_time = datetime.now().isoformat()
         self._save_to_file()
         logger.info(f"Cached {len(self.products_cache)} products total")
@@ -177,8 +188,8 @@ class ProductManager:
         name_count = 0
 
         try:
-            # Only enrich products that still need it (top 400 by profit)
-            to_enrich = [p for p in self.products_cache[:400] if not p.get("has_images")]
+            # Enrich all products that still need images (up to 1000)
+            to_enrich = [p for p in self.products_cache[:1000] if not p.get("has_images")]
             logger.info(f"Enriching {len(to_enrich)} products...")
 
             async with httpx.AsyncClient(timeout=30.0) as client:
