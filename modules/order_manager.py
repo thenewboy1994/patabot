@@ -84,29 +84,24 @@ class OrderManager:
 
     # ─── Stripe Checkout Session ───
 
-    async def create_checkout_session(self, product: dict) -> dict:
+    async def create_checkout_session(self, cart_items: list) -> dict:
         """
-        Create a Stripe Checkout Session — returns URL to redirect the customer.
-        Stripe collects card + shipping address directly (no card data on our server).
-        product = {id, sku, name, selling_price, wholesale_price, image_url}
+        Create a Stripe Checkout Session for one or more products.
+        Stripe collects card + shipping address on their secure page.
+        cart_items = [{id, sku, name, selling_price, wholesale_price, image_url, qty}, ...]
         """
         if not STRIPE_SECRET_KEY:
             return {"success": False, "error": "Stripe not configured — add STRIPE_SECRET_KEY to Railway env vars"}
+        if not cart_items:
+            return {"success": False, "error": "Cart is empty"}
 
         try:
-            amount_cents = int(round(product["selling_price"] * 100))
-            product_name = product.get("name", "Producto PataHogar")[:127]
-            image_url = product.get("image_url", "")
-
             params = {
                 "mode": "payment",
                 "success_url": SUCCESS_URL + "?session_id={CHECKOUT_SESSION_ID}",
                 "cancel_url": CANCEL_URL,
-                "line_items[0][price_data][currency]": "eur",
-                "line_items[0][price_data][unit_amount]": str(amount_cents),
-                "line_items[0][price_data][product_data][name]": product_name,
-                "line_items[0][quantity]": "1",
                 "payment_method_types[0]": "card",
+                "phone_number_collection[enabled]": "true",
                 "shipping_address_collection[allowed_countries][0]": "ES",
                 "shipping_address_collection[allowed_countries][1]": "FR",
                 "shipping_address_collection[allowed_countries][2]": "DE",
@@ -115,14 +110,32 @@ class OrderManager:
                 "shipping_address_collection[allowed_countries][5]": "BE",
                 "shipping_address_collection[allowed_countries][6]": "AT",
                 "shipping_address_collection[allowed_countries][7]": "PT",
-                "phone_number_collection[enabled]": "true",
-                "metadata[product_sku]": str(product.get("sku", "")),
-                "metadata[product_id]": str(product.get("id", "")),
-                "metadata[product_name]": product_name,
-                "metadata[wholesale_price]": str(product.get("wholesale_price", 0)),
             }
-            if image_url:
-                params["line_items[0][price_data][product_data][images][0]"] = image_url
+
+            # Build line items + collect metadata
+            skus = []
+            wholesale_prices = []
+            for i, item in enumerate(cart_items):
+                qty = max(1, int(item.get("qty", 1)))
+                amount_cents = int(round(float(item["selling_price"]) * 100))
+                name = str(item.get("name", "Producto PataHogar"))[:127]
+                params[f"line_items[{i}][price_data][currency]"] = "eur"
+                params[f"line_items[{i}][price_data][unit_amount]"] = str(amount_cents)
+                params[f"line_items[{i}][price_data][product_data][name]"] = name
+                params[f"line_items[{i}][quantity]"] = str(qty)
+                if item.get("image_url"):
+                    params[f"line_items[{i}][price_data][product_data][images][0]"] = item["image_url"]
+                skus.append(str(item.get("sku", "")))
+                wholesale_prices.append(str(item.get("wholesale_price", 0)))
+
+            # Store cart in metadata for webhook processing
+            params["metadata[cart_skus]"] = ",".join(skus)
+            params["metadata[cart_wholesale]"] = ",".join(wholesale_prices)
+            params["metadata[cart_json]"] = json.dumps([
+                {"sku": item.get("sku",""), "name": str(item.get("name",""))[:100],
+                 "qty": int(item.get("qty",1)), "wholesale_price": float(item.get("wholesale_price",0))}
+                for item in cart_items
+            ])[:500]
 
             async with httpx.AsyncClient(timeout=30.0) as client:
                 r = await client.post(
@@ -132,7 +145,7 @@ class OrderManager:
                 )
                 result = r.json()
                 if r.status_code == 200 and result.get("url"):
-                    logger.info(f"Stripe session created: {result['id']} for {product_name}")
+                    logger.info(f"Stripe session created: {result['id']} — {len(cart_items)} items")
                     return {"success": True, "checkout_url": result["url"], "session_id": result["id"]}
                 else:
                     err = result.get("error", {}).get("message", "Stripe error")
@@ -187,43 +200,54 @@ class OrderManager:
             return {"error": str(e)}
 
     async def _process_completed_checkout(self, session: dict):
-        """Build order from Stripe session and submit to BigBuy."""
+        """Build order(s) from Stripe session and submit to BigBuy."""
         meta = session.get("metadata", {})
         shipping = session.get("shipping_details") or session.get("shipping", {})
         address = shipping.get("address", {}) if shipping else {}
         customer_name = shipping.get("name", "") if shipping else ""
         name_parts = customer_name.split(" ", 1)
 
-        order_data = {
-            "product_sku": meta.get("product_sku", ""),
-            "product_name": meta.get("product_name", ""),
-            "wholesale_price": float(meta.get("wholesale_price", 0)),
-            "selling_price": session.get("amount_total", 0) / 100,
-            "quantity": 1,
-            "payment_method_id": None,  # already paid via Stripe Checkout
-            "stripe_session_id": session.get("id"),
-            "customer": {
-                "first_name": name_parts[0] if name_parts else "",
-                "last_name": name_parts[1] if len(name_parts) > 1 else "",
-                "email": session.get("customer_details", {}).get("email", ""),
-                "phone": session.get("customer_details", {}).get("phone", ""),
-                "address": address.get("line1", "") + (" " + address.get("line2", "") if address.get("line2") else ""),
-                "city": address.get("city", ""),
-                "postcode": address.get("postal_code", ""),
-                "country": address.get("country", "ES"),
-            }
+        customer = {
+            "first_name": name_parts[0] if name_parts else "",
+            "last_name": name_parts[1] if len(name_parts) > 1 else "",
+            "email": session.get("customer_details", {}).get("email", ""),
+            "phone": session.get("customer_details", {}).get("phone", ""),
+            "address": address.get("line1", "") + (" " + address.get("line2", "") if address.get("line2") else ""),
+            "city": address.get("city", ""),
+            "postcode": address.get("postal_code", ""),
+            "country": address.get("country", "ES"),
         }
 
-        # Mark as paid before creating order
+        # Parse cart items from metadata
+        cart_items = []
+        try:
+            if meta.get("cart_json"):
+                cart_items = json.loads(meta["cart_json"])
+        except Exception:
+            pass
+
+        if not cart_items:
+            # Fallback: single product from metadata
+            cart_items = [{
+                "sku": meta.get("product_sku", ""),
+                "name": meta.get("product_name", "Producto PataHogar"),
+                "qty": 1,
+                "wholesale_price": float(meta.get("wholesale_price", 0))
+            }]
+
+        total_selling = session.get("amount_total", 0) / 100
+        total_wholesale = sum(float(i.get("wholesale_price", 0)) * int(i.get("qty", 1)) for i in cart_items)
+
         order_id = f"PH{len(self.orders) + 1:04d}"
         order = {
             "id": order_id,
-            "product_sku": order_data["product_sku"],
-            "product_name": order_data["product_name"],
-            "wholesale_price": order_data["wholesale_price"],
-            "selling_price": order_data["selling_price"],
-            "quantity": 1,
-            "customer": order_data["customer"],
+            "cart_items": cart_items,
+            "product_sku": cart_items[0].get("sku", "") if cart_items else "",
+            "product_name": ", ".join(i.get("name","")[:40] for i in cart_items),
+            "wholesale_price": total_wholesale,
+            "selling_price": total_selling,
+            "quantity": sum(int(i.get("qty",1)) for i in cart_items),
+            "customer": customer,
             "status": "confirmed",
             "payment_status": "paid",
             "stripe_session_id": session.get("id"),
@@ -232,29 +256,35 @@ class OrderManager:
             "carrier": None,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "notes": ["Payment confirmed via Stripe Checkout"]
+            "notes": [f"Payment confirmed via Stripe Checkout — {len(cart_items)} items"]
         }
         self.orders.append(order)
         self._save_orders()
 
-        # Submit to BigBuy
-        bigbuy_result = await self._submit_to_bigbuy(order)
-        if bigbuy_result["success"]:
-            order["bigbuy_order_id"] = bigbuy_result["bigbuy_order_id"]
-            order["notes"].append(f"BigBuy order: {bigbuy_result['bigbuy_order_id']}")
-        else:
-            order["status"] = "bigbuy_error"
-            order["notes"].append(f"BigBuy error: {bigbuy_result['error']}")
-            await self._notify_owner_error(order, bigbuy_result["error"])
+        # Submit each cart item to BigBuy
+        for item in cart_items:
+            item_order = dict(order)
+            item_order["product_sku"] = item.get("sku", "")
+            item_order["quantity"] = int(item.get("qty", 1))
+            bigbuy_result = await self._submit_to_bigbuy(item_order)
+            if bigbuy_result["success"]:
+                order["notes"].append(f"BigBuy {item.get('sku','?')}: {bigbuy_result['bigbuy_order_id']}")
+                if not order["bigbuy_order_id"]:
+                    order["bigbuy_order_id"] = bigbuy_result["bigbuy_order_id"]
+            else:
+                order["notes"].append(f"BigBuy ERROR {item.get('sku','?')}: {bigbuy_result['error']}")
+                order["status"] = "bigbuy_error"
+                await self._notify_owner_error(order, bigbuy_result["error"])
+            await asyncio.sleep(2)
 
         self._save_orders()
         await self._send_customer_confirmation(order)
         await self._notify_owner_new_order(order)
 
-        if bigbuy_result["success"]:
+        if order["bigbuy_order_id"]:
             asyncio.create_task(self._check_tracking_later(order_id, delay=1800))
 
-        logger.info(f"Checkout processed: {order_id} | BigBuy: {bigbuy_result.get('bigbuy_order_id', 'ERROR')}")
+        logger.info(f"Checkout processed: {order_id} | {len(cart_items)} items | BigBuy: {order.get('bigbuy_order_id', 'ERROR')}")
 
     # ─── Main Entry Point ───
 

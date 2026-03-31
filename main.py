@@ -292,19 +292,33 @@ async def approve_ad(request: Request):
 @app.post("/api/checkout/create-session")
 async def create_checkout_session(request: Request):
     """
-    Customer clicks Buy → frontend calls this → we return Stripe URL → redirect customer.
-    Body: { product_id: int }
+    Customer clicks Pay → frontend sends cart → we return Stripe Checkout URL → redirect.
+    Body: { cart: [{id, sku, name, selling_price, wholesale_price, image_url, qty}, ...] }
+    OR single product: { product_id: int }
     """
     data = await request.json()
-    product_id = data.get("product_id")
-    if not product_id:
-        return JSONResponse(status_code=400, content={"error": "product_id required"})
 
-    product = await product_manager.get_product_by_id(int(product_id))
-    if not product:
-        return JSONResponse(status_code=404, content={"error": "Product not found"})
+    # Option A: full cart from frontend
+    if data.get("cart"):
+        cart_items = data["cart"]
+    # Option B: single product_id
+    elif data.get("product_id"):
+        product = await product_manager.get_product_by_id(int(data["product_id"]))
+        if not product:
+            return JSONResponse(status_code=404, content={"error": "Product not found"})
+        cart_items = [{
+            "id": product["id"],
+            "sku": product.get("sku", ""),
+            "name": product.get("name", ""),
+            "selling_price": product["selling_price"],
+            "wholesale_price": product.get("wholesale_price", 0),
+            "image_url": product.get("image_url", ""),
+            "qty": 1
+        }]
+    else:
+        return JSONResponse(status_code=400, content={"error": "cart or product_id required"})
 
-    result = await order_manager.create_checkout_session(product)
+    result = await order_manager.create_checkout_session(cart_items)
     return result
 
 @app.post("/api/stripe/webhook")
