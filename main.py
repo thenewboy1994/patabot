@@ -1,6 +1,8 @@
 """
-PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.4.0
-FIX: Fast startup fetch (200 products in 30-60s), fire-and-forget API, no more timeouts
+PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.5.0
+- Schedule: midnight fetch (00:00) — enrichment done before morning visitors
+- Catalog: only shows products with images (visitors never see incomplete products)
+- Stripe Checkout: Phase 3
 """
 
 import os
@@ -23,7 +25,7 @@ from modules.website_manager import WebsiteManager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('PataBot')
 
-app = FastAPI(title="PataBot", version="1.4.0")
+app = FastAPI(title="PataBot", version="1.5.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -329,7 +331,7 @@ async def _fetch_with_retry():
     logger.error("Auto-fetch failed after 3 attempts — will retry at 5am via scheduler")
 
 async def daily_research_and_fetch():
-    """كل يوم 5 صباحاً: بحث + جلب 600 منتج"""
+    """كل يوم منتصف الليل 00:00: بحث + جلب 600 منتج — الإثراء ينتهي قبل الصباح"""
     try:
         logger.info("🔍 Daily research starting...")
         await research_manager.run_daily_research()
@@ -414,10 +416,10 @@ async def get_all_stats():
 
 @app.on_event("startup")
 async def startup():
-    logger.info("PataBot v1.4.0 starting...")
+    logger.info("PataBot v1.5.0 starting...")
 
-    scheduler.add_job(daily_research_and_fetch, 'cron', hour=5, minute=0)
-    scheduler.add_job(daily_product_update, 'cron', hour=6, minute=0)
+    scheduler.add_job(daily_research_and_fetch, 'cron', hour=0, minute=0)
+    scheduler.add_job(daily_product_update, 'cron', hour=8, minute=0)
     scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)
     scheduler.add_job(daily_customer_service, 'interval', hours=3)
     scheduler.add_job(hourly_security_check, 'interval', hours=1)
@@ -433,7 +435,7 @@ async def startup():
         if missing > 0 and not product_manager.enrichment_running:
             asyncio.create_task(product_manager._delayed_enrichment(60))
 
-    logger.info("PataBot v1.4.0 operational! 🐾")
+    logger.info("PataBot v1.5.0 operational! 🐾")
 
 @app.on_event("shutdown")
 async def shutdown():

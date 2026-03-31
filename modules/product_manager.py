@@ -471,7 +471,8 @@ class ProductManager:
     # ─── Catalog API ───
 
     async def get_catalog(self, page=1, limit=48, category="", search="", sort="profit", min_price=0, max_price=99999):
-        products = [self._fmt(p) for p in self.products_cache]
+        # Only show products with images — visitors never see incomplete products
+        products = [self._fmt(p) for p in self.products_cache if p.get("has_images")]
 
         if category and category != "all":
             products = [p for p in products if p.get("category") == category]
@@ -551,7 +552,9 @@ class ProductManager:
     async def get_current_products(self):
         if not self.products_cache:
             await self.fetch_profitable_products(max_pages=3)
-        return [self._fmt(p) for p in self.products_cache[:200]]
+        # Only return enriched products (with images) to the homepage
+        enriched = [self._fmt(p) for p in self.products_cache if p.get("has_images")]
+        return enriched[:200]
 
     async def get_product_count(self):
         return len(self.products_cache)
