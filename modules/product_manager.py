@@ -1,10 +1,10 @@
 """
-PataBot — Product Manager v6.1
-- JSON persistence (survives restarts)
-- Fetches up to 1000 products from BigBuy
-- Catalog API with pagination, search, filter, sort
-- Reliable image/name enrichment (each product matches its own images)
-- v6.1: Category names from BigBuy taxonomy
+PataBot — Product Manager v7.0
+- Fixed _parse_info() with proper language code normalization
+- Fixed _enrich_products() to re-fetch descriptions for single-language products
+- Added run_re_enrich_descriptions() to force re-fetch multilingual descriptions
+- Added detailed logging to diagnose BigBuy language data
+- All other features from v6.1 preserved
 """
 
 import httpx
@@ -21,6 +21,25 @@ BIGBUY_API_KEY = os.getenv("BIGBUY_API_KEY", "")
 BIGBUY_BASE = "https://api.bigbuy.eu"
 CACHE_FILE = Path("products_cache.json")
 
+# Map of full language names → 2-letter ISO code
+_LANG_NAME_MAP = {
+    'español': 'es', 'spanish': 'es', 'espanol': 'es', 'castellano': 'es',
+    'english': 'en', 'inglés': 'en', 'ingles': 'en', 'anglais': 'en',
+    'français': 'fr', 'french': 'fr', 'frances': 'fr', 'francais': 'fr',
+    'deutsch': 'de', 'german': 'de', 'alemán': 'de', 'aleman': 'de',
+    'nederlands': 'nl', 'dutch': 'nl', 'holandés': 'nl', 'holandes': 'nl',
+    'italiano': 'it', 'italian': 'it',
+    'português': 'pt', 'portuguese': 'pt', 'portugues': 'pt',
+    'polski': 'pl', 'polish': 'pl', 'polaco': 'pl',
+    'català': 'ca', 'catalan': 'ca', 'catalán': 'ca',
+    'русский': 'ru', 'russian': 'ru',
+    'العربية': 'ar', 'arabic': 'ar',
+    'svenska': 'sv', 'swedish': 'sv',
+    'dansk': 'da', 'danish': 'da',
+    'norsk': 'no', 'norwegian': 'no',
+    'suomi': 'fi', 'finnish': 'fi',
+}
+
 
 class ProductManager:
 
@@ -29,7 +48,7 @@ class ProductManager:
         self.orders = []
         self.enrichment_running = False
         self.last_fetch_time = None
-        self.category_names = {}  # {category_id: name}
+        self.category_names = {}
         self.headers = {
             "Authorization": f"Bearer {BIGBUY_API_KEY}",
             "Accept": "application/json",
@@ -92,10 +111,44 @@ class ProductManager:
                     await asyncio.sleep(10)
         return None
 
+    # ─── Language Code Normalization ───
+
+    @staticmethod
+    def _normalize_lang(raw):
+        """Normalize any language identifier to 2-letter ISO code."""
+        if not raw:
+            return ''
+        s = str(raw).strip()
+        lower = s.lower()
+
+        # Direct match in map
+        if lower in _LANG_NAME_MAP:
+            return _LANG_NAME_MAP[lower]
+
+        # ISO locale like "es-ES", "en-GB", "nl_NL", "fr_FR"
+        if len(s) >= 4 and s[2] in '-_':
+            return s[:2].lower()
+
+        # Plain 2-letter ISO code
+        if len(s) == 2:
+            return lower
+
+        # Try removing accents for names like "Català" → "catala"
+        try:
+            import unicodedata
+            normalized = unicodedata.normalize('NFD', lower)
+            no_accent = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+            if no_accent in _LANG_NAME_MAP:
+                return _LANG_NAME_MAP[no_accent]
+        except Exception:
+            pass
+
+        # Fallback: first 2 chars
+        return lower[:2] if len(lower) >= 2 else lower
+
     # ─── Taxonomy Names ───
 
     async def _fetch_taxonomy_names(self, client):
-        """Fetch BigBuy taxonomy/category names and cache them."""
         data = await self._api_get(client, f"{BIGBUY_BASE}/rest/catalog/taxonomies.json")
         if data and isinstance(data, list) and len(data) > 0:
             for item in data:
@@ -105,7 +158,6 @@ class ProductManager:
                     self.category_names[tid] = name
             logger.info(f"Loaded {len(self.category_names)} taxonomy names from BigBuy")
         else:
-            # Fallback: try categories endpoint
             data2 = await self._api_get(client, f"{BIGBUY_BASE}/rest/catalog/categories.json",
                                         params={"pageSize": 200})
             if data2 and isinstance(data2, list):
@@ -123,8 +175,6 @@ class ProductManager:
         errors = []
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-
-            # Fetch taxonomy names if not cached
             if not self.category_names:
                 await self._fetch_taxonomy_names(client)
                 await asyncio.sleep(2)
@@ -212,16 +262,32 @@ class ProductManager:
         name_count = 0
 
         try:
-            to_enrich = [p for p in self.products_cache[:1000] if not p.get("has_images")]
-            logger.info(f"Enriching {len(to_enrich)} products...")
+            # PASS 1: Products without images (fetch images + descriptions)
+            need_images = [p for p in self.products_cache[:1000] if not p.get("has_images")]
+
+            # PASS 2: Products WITH images but missing multilingual descriptions
+            # (only Spanish or no descriptions at all)
+            need_descriptions = [
+                p for p in self.products_cache[:1000]
+                if p.get("has_images") and (
+                    not p.get("has_names") or
+                    len(p.get("descriptions", {})) <= 1
+                )
+            ]
+
+            logger.info(
+                f"Enrichment: {len(need_images)} need images, "
+                f"{len(need_descriptions)} need multilingual descriptions"
+            )
 
             async with httpx.AsyncClient(timeout=30.0) as client:
-                for i, product in enumerate(to_enrich):
+
+                # PASS 1 — Fetch images + descriptions for products without images
+                for i, product in enumerate(need_images):
                     pid = product["id"]
 
                     img_data = await self._api_get(
-                        client,
-                        f"{BIGBUY_BASE}/rest/catalog/productimages/{pid}.json"
+                        client, f"{BIGBUY_BASE}/rest/catalog/productimages/{pid}.json"
                     )
                     if img_data:
                         urls = self._parse_images(img_data)
@@ -234,29 +300,32 @@ class ProductManager:
                     await asyncio.sleep(2)
 
                     if not product.get("has_names"):
-                        info_data = await self._api_get(
-                            client,
-                            f"{BIGBUY_BASE}/rest/catalog/productinformation/{pid}.json"
-                        )
-                        if info_data:
-                            descs = self._parse_info(info_data)
-                            if descs:
-                                product["descriptions"] = descs
-                                product["has_names"] = True
-                                for lang in ["es", "en", "fr", "de"]:
-                                    if lang in descs and descs[lang].get("name"):
-                                        product["name"] = descs[lang]["name"]
-                                        if descs[lang].get("description"):
-                                            product["description"] = descs[lang]["description"][:500]
-                                        break
-                                name_count += 1
+                        fetched = await self._fetch_product_info(client, product)
+                        if fetched:
+                            name_count += 1
                         await asyncio.sleep(3)
 
                     if (i + 1) % 20 == 0:
-                        logger.info(f"Enrichment: {i+1}/{len(to_enrich)} | Images: {img_count} | Names: {name_count}")
+                        logger.info(
+                            f"Pass1: {i+1}/{len(need_images)} | "
+                            f"Images: {img_count} | Names: {name_count}"
+                        )
                         self._save_to_file()
 
-            logger.info(f"ENRICHMENT COMPLETE: {img_count} images, {name_count} names")
+                # PASS 2 — Fetch multilingual descriptions for single-language products
+                for i, product in enumerate(need_descriptions):
+                    fetched = await self._fetch_product_info(client, product, force=True)
+                    if fetched:
+                        name_count += 1
+                    await asyncio.sleep(3)
+
+                    if (i + 1) % 20 == 0:
+                        logger.info(
+                            f"Pass2: {i+1}/{len(need_descriptions)} | Names: {name_count}"
+                        )
+                        self._save_to_file()
+
+            logger.info(f"ENRICHMENT COMPLETE: {img_count} images, {name_count} descriptions")
             self._save_to_file()
 
         except Exception as e:
@@ -264,6 +333,44 @@ class ProductManager:
             self._save_to_file()
         finally:
             self.enrichment_running = False
+
+    async def _fetch_product_info(self, client, product, force=False):
+        """Fetch multilingual product info from BigBuy for a single product."""
+        pid = product["id"]
+        if product.get("has_names") and not force:
+            return False
+
+        info_data = await self._api_get(
+            client, f"{BIGBUY_BASE}/rest/catalog/productinformation/{pid}.json"
+        )
+        if not info_data:
+            return False
+
+        # Log what BigBuy returns so we can diagnose language availability
+        if isinstance(info_data, list):
+            raw_langs = [
+                item.get("isoCode", item.get("language", "?"))
+                for item in info_data if isinstance(item, dict)
+            ]
+            logger.info(f"Product {pid} — BigBuy returned {len(info_data)} languages: {raw_langs}")
+        else:
+            logger.info(f"Product {pid} — BigBuy returned dict (single lang)")
+
+        descs = self._parse_info(info_data)
+        logger.info(f"Product {pid} — parsed languages: {list(descs.keys())}")
+
+        if descs:
+            product["descriptions"] = descs
+            product["has_names"] = True
+            # Set best available name + description on the product
+            for lang in ["es", "en", "fr", "de", "it", "nl", "pt"]:
+                if lang in descs and descs[lang].get("name"):
+                    product["name"] = descs[lang]["name"]
+                    if descs[lang].get("description"):
+                        product["description"] = descs[lang]["description"][:500]
+                    break
+            return True
+        return False
 
     async def run_enrichment(self):
         if not self.products_cache:
@@ -276,6 +383,29 @@ class ProductManager:
             "status": "Enrichment started",
             "products_missing_images": missing_images,
             "total": len(self.products_cache)
+        }
+
+    async def run_re_enrich_descriptions(self):
+        """Force re-fetch descriptions for products that only have 1 language (usually Spanish only)."""
+        if not self.products_cache:
+            return {"error": "No products cached. Call /api/products/fetch first."}
+        if self.enrichment_running:
+            return {"status": "Enrichment already running", "progress": self.get_enrichment_status()}
+
+        # Reset has_names for products with <= 1 language so enrichment will re-fetch them
+        reset_count = 0
+        for p in self.products_cache:
+            if len(p.get("descriptions", {})) <= 1:
+                p["has_names"] = False
+                reset_count += 1
+
+        logger.info(f"Re-enrich descriptions: reset {reset_count} products")
+        asyncio.create_task(self._enrich_products())
+        return {
+            "status": "Re-enrichment started",
+            "products_reset": reset_count,
+            "total": len(self.products_cache),
+            "message": f"Re-fetching descriptions for {reset_count} products. Check /api/products/enrichment-status."
         }
 
     # ─── Image & Name Parsers ───
@@ -301,20 +431,41 @@ class ProductManager:
         return cover + others
 
     def _parse_info(self, data):
+        """Parse BigBuy productinformation response into {lang: {name, description}} dict."""
         descs = {}
         try:
             if isinstance(data, list):
                 for item in data:
-                    if isinstance(item, dict):
-                        lang = item.get("isoCode", item.get("language", "")).lower()[:2]
-                        name = item.get("name", "").strip()
-                        desc = item.get("description", "").strip()
-                        if lang and (name or desc):
+                    if not isinstance(item, dict):
+                        continue
+                    # BigBuy uses "isoCode" or "language" field
+                    raw_lang = item.get("isoCode", item.get("language", item.get("lang", "")))
+                    lang = self._normalize_lang(raw_lang)
+                    name = item.get("name", "").strip()
+                    desc = item.get("description", "").strip()
+                    # Only store if we have valid 2-letter lang code and at least name or description
+                    if lang and len(lang) == 2 and (name or desc):
+                        descs[lang] = {"name": name, "description": desc}
+
+            elif isinstance(data, dict):
+                # Check if it's structured as {lang_code: {name, description}, ...}
+                for key, val in data.items():
+                    if isinstance(val, dict) and len(str(key)) == 2:
+                        lang = str(key).lower()
+                        name = val.get("name", "").strip()
+                        desc = val.get("description", "").strip()
+                        if name or desc:
                             descs[lang] = {"name": name, "description": desc}
-            elif isinstance(data, dict) and data.get("name"):
-                descs["es"] = {"name": data["name"], "description": data.get("description", "")}
-        except Exception:
-            pass
+
+                # If no language keys found, treat as single Spanish dict
+                if not descs and data.get("name"):
+                    descs["es"] = {
+                        "name": data["name"],
+                        "description": data.get("description", "")
+                    }
+
+        except Exception as e:
+            logger.debug(f"_parse_info error: {e}")
         return descs
 
     # ─── Catalog API ───
@@ -356,7 +507,6 @@ class ProductManager:
         }
 
     async def get_categories(self):
-        """Get all categories with product counts and names."""
         cats = {}
         for p in self.products_cache:
             cat = p.get("category", "")
@@ -430,10 +580,12 @@ class ProductManager:
         total = len(self.products_cache)
         with_images = sum(1 for p in self.products_cache if p.get("has_images"))
         with_names = sum(1 for p in self.products_cache if p.get("has_names"))
+        multilingual = sum(1 for p in self.products_cache if len(p.get("descriptions", {})) > 1)
         return {
             "total_products": total,
             "with_images": with_images,
             "with_names": with_names,
+            "multilingual_descriptions": multilingual,
             "progress_pct": round((with_images / total * 100) if total > 0 else 0),
             "running": self.enrichment_running,
             "last_fetch": self.last_fetch_time

@@ -114,6 +114,12 @@ async def enrich_products():
     """Manually trigger image/name enrichment for products."""
     return await product_manager.run_enrichment()
 
+@app.get("/api/products/re-enrich-descriptions")
+async def re_enrich_descriptions():
+    """Force re-fetch multilingual descriptions for all single-language products.
+    Run this after deploying v7 to get EN/FR/DE/NL/IT descriptions from BigBuy."""
+    return await product_manager.run_re_enrich_descriptions()
+
 @app.get("/api/products/enrichment-status")
 async def enrichment_status():
     return product_manager.get_enrichment_status()
