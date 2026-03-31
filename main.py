@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from modules.product_manager import ProductManager
+from modules.order_manager import OrderManager
 from modules.marketing_manager import MarketingManager
 from modules.research_manager import ResearchManager
 from modules.customer_service import CustomerService
@@ -44,6 +45,7 @@ app.add_middleware(
 )
 
 product_manager = ProductManager()
+order_manager = OrderManager()
 marketing_manager = MarketingManager()
 research_manager = ResearchManager()
 customer_service = CustomerService()
@@ -283,13 +285,52 @@ async def propose_ad(request: Request):
 async def approve_ad(request: Request):
     return await marketing_manager.launch_paid_ad(await request.json())
 
+# ════════════════════════════════════════════════════════
+# STRIPE CHECKOUT + ORDERS (Phase 3)
+# ════════════════════════════════════════════════════════
+
+@app.post("/api/checkout/create-session")
+async def create_checkout_session(request: Request):
+    """
+    Customer clicks Buy → frontend calls this → we return Stripe URL → redirect customer.
+    Body: { product_id: int }
+    """
+    data = await request.json()
+    product_id = data.get("product_id")
+    if not product_id:
+        return JSONResponse(status_code=400, content={"error": "product_id required"})
+
+    product = await product_manager.get_product_by_id(int(product_id))
+    if not product:
+        return JSONResponse(status_code=404, content={"error": "Product not found"})
+
+    result = await order_manager.create_checkout_session(product)
+    return result
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    """Stripe calls this after payment — PataBot auto-submits order to BigBuy."""
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    result = await order_manager.handle_webhook_event(payload, sig)
+    return result
+
 @app.get("/api/orders")
 async def get_orders():
-    return {"orders": await product_manager.get_orders()}
+    return {"orders": order_manager.get_all_orders(), "stats": order_manager.get_order_stats()}
 
-@app.post("/api/orders/process")
-async def process_order(request: Request):
-    return await product_manager.process_order(await request.json())
+@app.get("/api/orders/stats")
+async def order_stats():
+    return order_manager.get_order_stats()
+
+@app.get("/api/orders/{order_id}/tracking")
+async def get_tracking(order_id: str):
+    return await order_manager.fetch_tracking(order_id)
+
+@app.get("/api/orders/refresh-tracking")
+async def refresh_tracking():
+    """Check tracking for all confirmed orders — run manually if needed."""
+    return await order_manager.refresh_all_tracking()
 
 @app.get("/api/customers/messages")
 async def customer_messages():
