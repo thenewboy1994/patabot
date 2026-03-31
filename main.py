@@ -64,7 +64,7 @@ async def home():
         "status": "🟢 PataBot is running!",
         "bot_name": "PataBot - الوكيل الذكي الشامل",
         "website": "patahogar.com",
-        "version": "1.4.0",
+        "version": "1.5.0",
         "timestamp": datetime.now().isoformat(),
         "modules": {k: "✅ Active" for k in [
             "product_manager", "marketing_manager", "research_manager",
