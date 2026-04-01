@@ -368,11 +368,11 @@ async def chat_with_bot(request: Request):
 # ════════════════════════════════════════════════════════
 
 async def _fetch_with_retry():
-    """Fetches 200 products on startup — retries every 5 min if rate limited (max 3 attempts)."""
+    """Fetches 600 products on startup — retries every 5 min if rate limited (max 3 attempts)."""
     for attempt in range(3):
         try:
-            logger.info(f"Auto-fetch attempt {attempt + 1}/3 (200 products)...")
-            result = await product_manager.fetch_profitable_products(max_pages=1, page_size=200)
+            logger.info(f"Auto-fetch attempt {attempt + 1}/3 (600 products)...")
+            result = await product_manager.fetch_profitable_products(max_pages=3, page_size=200)
             count = result.get("count", 0)
             if count > 0:
                 logger.info(f"✅ Auto-fetch success: {count} products!")
@@ -383,7 +383,7 @@ async def _fetch_with_retry():
         except Exception as e:
             logger.error(f"Auto-fetch error: {e} — retrying in 5 min...")
             await asyncio.sleep(300)
-    logger.error("Auto-fetch failed after 3 attempts — will retry at 5am via scheduler")
+    logger.error("Auto-fetch failed after 3 attempts — will retry at midnight via scheduler")
 
 async def daily_research_and_fetch():
     """كل يوم منتصف الليل 00:00: بحث + جلب 600 منتج — الإثراء ينتهي قبل الصباح"""
@@ -482,7 +482,7 @@ async def startup():
     scheduler.start()
 
     if not product_manager.products_cache:
-        logger.info("Cache empty — starting fast auto-fetch (200 products)...")
+        logger.info("Cache empty — starting auto-fetch (600 products)...")
         asyncio.create_task(_fetch_with_retry())
     else:
         logger.info(f"✅ Loaded {len(product_manager.products_cache)} products from file cache")

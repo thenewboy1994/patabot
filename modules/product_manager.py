@@ -237,7 +237,7 @@ class ProductManager:
         self._save_to_file()
         logger.info(f"Cached {len(self.products_cache)} products total")
 
-        asyncio.create_task(self._delayed_enrichment(60))
+        asyncio.create_task(self._delayed_enrichment(30))
 
         return {
             "status": "success",
