@@ -237,7 +237,7 @@ class ProductManager:
         self._save_to_file()
         logger.info(f"Cached {len(self.products_cache)} products total")
 
-        asyncio.create_task(self._delayed_enrichment(300))
+        asyncio.create_task(self._delayed_enrichment(60))
 
         return {
             "status": "success",
@@ -471,8 +471,10 @@ class ProductManager:
     # ─── Catalog API ───
 
     async def get_catalog(self, page=1, limit=48, category="", search="", sort="profit", min_price=0, max_price=99999):
-        # Only show products with images — visitors never see incomplete products
-        products = [self._fmt(p) for p in self.products_cache if p.get("has_images")]
+        # Prefer enriched products; fall back to all products if enrichment hasn't run yet
+        enriched = [p for p in self.products_cache if p.get("has_images")]
+        pool = enriched if enriched else self.products_cache
+        products = [self._fmt(p) for p in pool]
 
         if category and category != "all":
             products = [p for p in products if p.get("category") == category]
@@ -553,9 +555,10 @@ class ProductManager:
     async def get_current_products(self):
         if not self.products_cache:
             await self.fetch_profitable_products(max_pages=3)
-        # Only return enriched products (with images) to the homepage
-        enriched = [self._fmt(p) for p in self.products_cache if p.get("has_images")]
-        return enriched[:200]
+        # Prefer enriched products; fall back to all if enrichment hasn't run yet
+        enriched = [p for p in self.products_cache if p.get("has_images")]
+        pool = enriched if enriched else self.products_cache
+        return [self._fmt(p) for p in pool[:200]]
 
     async def get_product_count(self):
         return len(self.products_cache)
