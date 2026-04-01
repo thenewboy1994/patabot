@@ -31,7 +31,8 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
 SUCCESS_URL = os.getenv("SUCCESS_URL", "https://patahogar.com/success.html")
 CANCEL_URL = os.getenv("CANCEL_URL", "https://patahogar.com/catalog.html")
-ORDERS_FILE = Path("orders.json")
+_CACHE_DIR = Path(os.getenv("CACHE_DIR", "."))
+ORDERS_FILE = _CACHE_DIR / "orders.json"
 
 # BigBuy carrier codes by country
 COUNTRY_CARRIERS = {

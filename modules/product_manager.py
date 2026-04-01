@@ -19,7 +19,8 @@ logger = logging.getLogger("patabot.products")
 
 BIGBUY_API_KEY = os.getenv("BIGBUY_API_KEY", "")
 BIGBUY_BASE = "https://api.bigbuy.eu"
-CACHE_FILE = Path("products_cache.json")
+_CACHE_DIR = Path(os.getenv("CACHE_DIR", "."))
+CACHE_FILE = _CACHE_DIR / "products_cache.json"
 
 # Map of full language names → 2-letter ISO code
 _LANG_NAME_MAP = {
