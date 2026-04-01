@@ -1,8 +1,9 @@
 """
-PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.5.0
+PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.6.0
 - Schedule: midnight fetch (00:00) — enrichment done before morning visitors
 - Catalog: only shows products with images (visitors never see incomplete products)
 - Stripe Checkout: Phase 3
+- Meta Ads: Phase 4 — daily proposals → email approval → auto-launch
 """
 
 import os
@@ -10,7 +11,7 @@ import asyncio
 import logging
 from datetime import datetime
 from fastapi import FastAPI, Request, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -26,7 +27,7 @@ from modules.website_manager import WebsiteManager
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('PataBot')
 
-app = FastAPI(title="PataBot", version="1.5.0")
+app = FastAPI(title="PataBot", version="1.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -64,7 +65,7 @@ async def home():
         "status": "🟢 PataBot is running!",
         "bot_name": "PataBot - الوكيل الذكي الشامل",
         "website": "patahogar.com",
-        "version": "1.5.0",
+        "version": "1.6.0",
         "timestamp": datetime.now().isoformat(),
         "modules": {k: "✅ Active" for k in [
             "product_manager", "marketing_manager", "research_manager",
@@ -270,10 +271,75 @@ async def fetch_recommended_products():
 async def marketing_status():
     return await marketing_manager.get_campaigns_status()
 
-@app.post("/api/marketing/create-content")
-async def create_content(request: Request):
+@app.get("/api/marketing/campaigns-status")
+async def campaigns_status():
+    """Alias for /api/marketing/status — full Phase 4 dashboard."""
+    return await marketing_manager.get_campaigns_status()
+
+@app.get("/api/marketing/run-daily")
+async def run_daily_marketing():
+    """
+    Trigger the full Phase 4 pipeline manually:
+    1. Select best products for ads
+    2. Create proposals
+    3. Email Mohamed for approval
+    4. Check active ads performance
+    """
+    top_products = await product_manager.get_current_products()
+    research_results = await research_manager.get_research_status()
+    asyncio.create_task(marketing_manager.run_daily_marketing(top_products, research_results))
+    return {
+        "status": "started",
+        "message": "Daily marketing pipeline started. Mohamed will receive an email with ad proposals."
+    }
+
+@app.get("/api/marketing/approve-ad")
+async def approve_ad_get(ad_id: str = Query(""), action: str = Query("approve")):
+    """
+    Called from email buttons — Mohamed clicks Approve/Reject link.
+    GET /api/marketing/approve-ad?ad_id=AD-xxx&action=approve
+    GET /api/marketing/approve-ad?ad_id=AD-xxx&action=reject
+    """
+    if not ad_id:
+        return JSONResponse(status_code=400, content={"error": "ad_id required"})
+
+    if action == "approve":
+        result = await marketing_manager.launch_approved_ad(ad_id)
+        if result.get("success"):
+            return HTMLResponse(content="""
+                <html><body style="font-family:Arial;text-align:center;padding:40px">
+                <h2 style="color:#27ae60">✅ Anuncio aprobado y lanzado</h2>
+                <p>El anuncio se está publicando en Facebook e Instagram.</p>
+                <p><a href="https://www.facebook.com/adsmanager" style="color:#1877f2">Ver en Meta Ads Manager</a></p>
+                <p><a href="https://patabot-production.up.railway.app/api/marketing/status">Ver estado completo</a></p>
+                </body></html>""")
+        return HTMLResponse(content=f"""
+            <html><body style="font-family:Arial;text-align:center;padding:40px">
+            <h2 style="color:#e74c3c">⚠️ Error al lanzar</h2>
+            <p>{result.get('error','Unknown error')}</p>
+            <p><a href="https://patabot-production.up.railway.app/api/marketing/status">Ver estado</a></p>
+            </body></html>""")
+
+    elif action == "reject":
+        await marketing_manager.reject_ad(ad_id)
+        return HTMLResponse(content="""
+            <html><body style="font-family:Arial;text-align:center;padding:40px">
+            <h2 style="color:#e67e22">❌ Anuncio rechazado</h2>
+            <p>El anuncio ha sido descartado. PataBot buscará mejores opciones mañana.</p>
+            <p><a href="https://patabot-production.up.railway.app/api/marketing/status">Ver estado</a></p>
+            </body></html>""")
+
+    return JSONResponse(status_code=400, content={"error": "action must be approve or reject"})
+
+@app.post("/api/marketing/approve-ad")
+async def approve_ad_post(request: Request):
+    """POST version for direct API calls."""
     data = await request.json()
-    return await marketing_manager.create_product_content(data.get("product_id"))
+    ad_id = data.get("ad_id", "")
+    action = data.get("action", "approve")
+    if action == "approve":
+        return await marketing_manager.launch_approved_ad(ad_id)
+    return await marketing_manager.reject_ad(ad_id)
 
 @app.post("/api/marketing/propose-ad")
 async def propose_ad(request: Request):
@@ -281,9 +347,10 @@ async def propose_ad(request: Request):
     proposal = await marketing_manager.propose_paid_ad(data)
     return {"status": "Waiting for Mohamed's approval", "proposal": proposal}
 
-@app.post("/api/marketing/approve-ad")
-async def approve_ad(request: Request):
-    return await marketing_manager.launch_paid_ad(await request.json())
+@app.post("/api/marketing/create-content")
+async def create_content(request: Request):
+    data = await request.json()
+    return await marketing_manager.create_product_content(data.get("product_id"))
 
 # ════════════════════════════════════════════════════════
 # STRIPE CHECKOUT + ORDERS (Phase 3)
@@ -407,9 +474,11 @@ async def daily_product_update():
         logger.error(f"Daily product update failed: {e}")
 
 async def daily_marketing_tasks():
+    """Phase 4: select best products → create proposals → email Mohamed → check performance."""
     try:
-        await marketing_manager.create_organic_content()
-        await marketing_manager.post_to_all_platforms()
+        top_products = await product_manager.get_current_products()
+        research_results = await research_manager.get_research_status()
+        await marketing_manager.run_daily_marketing(top_products, research_results)
     except Exception as e:
         logger.error(f"Marketing tasks failed: {e}")
 
@@ -471,7 +540,7 @@ async def get_all_stats():
 
 @app.on_event("startup")
 async def startup():
-    logger.info("PataBot v1.5.0 starting...")
+    logger.info("PataBot v1.6.0 starting...")
 
     scheduler.add_job(daily_research_and_fetch, 'cron', hour=0, minute=0)
     scheduler.add_job(daily_product_update, 'cron', hour=8, minute=0)
@@ -490,7 +559,7 @@ async def startup():
         if missing > 0 and not product_manager.enrichment_running:
             asyncio.create_task(product_manager._delayed_enrichment(60))
 
-    logger.info("PataBot v1.5.0 operational! 🐾")
+    logger.info("PataBot v1.6.0 operational! 🐾")
 
 @app.on_event("shutdown")
 async def shutdown():
