@@ -520,6 +520,7 @@ class ProductManager:
                 "count": v
             }
             for k, v in sorted(cats.items(), key=lambda x: x[1], reverse=True)[:50]
+            if self.category_names.get(k, "")  # Only show categories with real names
         ]
 
     async def get_product_by_id(self, product_id):
