@@ -131,19 +131,25 @@ class MarketingManager:
         if not SMTP_USER or not SMTP_PASS:
             logger.warning("SMTP not configured — email not sent")
             return
+        # Google App Passwords sometimes have spaces — remove them
+        smtp_pass_clean = SMTP_PASS.replace(" ", "")
         try:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"]    = f"PataBot <{SMTP_USER}>"
             msg["To"]      = OWNER_EMAIL
             msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+                s.ehlo()
                 s.starttls()
-                s.login(SMTP_USER, SMTP_PASS)
+                s.ehlo()
+                s.login(SMTP_USER, smtp_pass_clean)
                 s.sendmail(SMTP_USER, OWNER_EMAIL, msg.as_string())
-            logger.info(f"Email sent: {subject}")
+            logger.info(f"✅ Email sent: {subject}")
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"Email auth error (check App Password): {e}")
         except Exception as e:
-            logger.error(f"Email error: {e}")
+            logger.error(f"Email error: {type(e).__name__}: {e}")
 
     # ════════════════════════════════════════════════════════
     # PHASE 4 — DAILY MARKETING PIPELINE

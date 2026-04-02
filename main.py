@@ -267,6 +267,104 @@ async def fetch_recommended_products():
         "message": "Product fetch started in background. Check /api/products/enrichment-status."
     }
 
+@app.get("/api/marketing/test-email")
+async def test_email():
+    """
+    اختبار مباشر لـ SMTP — يُظهر سبب عدم وصول الإيميل بالتفصيل.
+    شغّل هذا أولاً لتشخيص المشكلة.
+    """
+    import smtplib
+    import os
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+
+    smtp_host  = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port  = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user  = os.getenv("SMTP_USER", "")
+    smtp_pass  = os.getenv("SMTP_PASS", "")
+    owner_mail = os.getenv("OWNER_EMAIL", "")
+
+    if not smtp_user or not smtp_pass:
+        return {"success": False, "error": "SMTP_USER o SMTP_PASS no configurados en Railway"}
+
+    # Remove spaces from app password (Google sometimes shows with spaces)
+    smtp_pass_clean = smtp_pass.replace(" ", "")
+
+    steps = []
+    try:
+        steps.append("Conectando a smtp.gmail.com:587...")
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as s:
+            steps.append("✅ Conectado")
+            s.ehlo()
+            steps.append("✅ EHLO OK")
+            s.starttls()
+            steps.append("✅ TLS iniciado")
+            s.ehlo()
+            s.login(smtp_user, smtp_pass_clean)
+            steps.append(f"✅ Login OK con {smtp_user}")
+
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = "🐾 PataBot — Test de email funcionando"
+            msg["From"]    = f"PataBot <{smtp_user}>"
+            msg["To"]      = owner_mail
+            msg.attach(MIMEText(
+                "<h2>✅ PataBot email funciona correctamente</h2>"
+                "<p>Si ves este email, el sistema de aprobación de anuncios está listo.</p>"
+                "<p><b>— PataBot 🐾</b></p>",
+                "html", "utf-8"
+            ))
+            s.sendmail(smtp_user, owner_mail, msg.as_string())
+            steps.append(f"✅ Email enviado a {owner_mail}")
+
+        return {
+            "success": True,
+            "steps": steps,
+            "message": f"Email enviado a {owner_mail}. Revisa también la carpeta SPAM.",
+            "smtp_user": smtp_user,
+            "owner_email": owner_mail
+        }
+
+    except smtplib.SMTPAuthenticationError as e:
+        steps.append(f"❌ Error de autenticación: {e}")
+        return {
+            "success": False, "steps": steps,
+            "error": "Contraseña incorrecta o 2FA no activado",
+            "fix": "1) Activa verificación en 2 pasos en Google. 2) Ve a myaccount.google.com → Seguridad → Contraseñas de aplicaciones → Genera una nueva para 'PataBot'. 3) Copia los 16 caracteres SIN espacios en SMTP_PASS."
+        }
+    except smtplib.SMTPConnectError as e:
+        steps.append(f"❌ Error de conexión: {e}")
+        return {"success": False, "steps": steps, "error": "No se puede conectar a Gmail SMTP. Railway puede estar bloqueando el puerto 587."}
+    except Exception as e:
+        steps.append(f"❌ Error: {type(e).__name__}: {e}")
+        return {"success": False, "steps": steps, "error": str(e)}
+
+@app.get("/api/marketing/run-daily-sync")
+async def run_daily_marketing_sync():
+    """
+    Versión síncrona de run-daily — espera el resultado completo.
+    Útil para ver si hay productos candidatos o si el email se envía.
+    """
+    top_products = await product_manager.get_current_products()
+    research_results = await research_manager.get_research_status()
+
+    products_with_images = [p for p in top_products if p.get("image_url")]
+
+    if not products_with_images:
+        return {
+            "status": "no_products_with_images",
+            "total_products": len(top_products),
+            "products_with_images": 0,
+            "fix": "Espera a que el enriquecimiento termine. Revisa /api/products/enrichment-status"
+        }
+
+    result = await marketing_manager.run_daily_marketing(top_products, research_results)
+    return {
+        "status": result,
+        "total_products": len(top_products),
+        "products_with_images": len(products_with_images),
+        "pending_ads": len(marketing_manager.pending_ads)
+    }
+
 @app.get("/api/marketing/status")
 async def marketing_status():
     return await marketing_manager.get_campaigns_status()
