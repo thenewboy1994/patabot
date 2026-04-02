@@ -270,73 +270,56 @@ async def fetch_recommended_products():
 @app.get("/api/marketing/test-email")
 async def test_email():
     """
-    اختبار مباشر لـ SMTP — يُظهر سبب عدم وصول الإيميل بالتفصيل.
-    شغّل هذا أولاً لتشخيص المشكلة.
+    اختبار SendGrid API — يُظهر النتيجة بالتفصيل.
     """
-    import smtplib
-    import os
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
+    import httpx
 
-    smtp_host  = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port  = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user  = os.getenv("SMTP_USER", "")
-    smtp_pass  = os.getenv("SMTP_PASS", "")
-    owner_mail = os.getenv("OWNER_EMAIL", "")
+    sendgrid_key = os.environ.get("SENDGRID_API_KEY", "")
+    smtp_user    = os.environ.get("SMTP_USER", "")
+    owner_mail   = os.environ.get("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
 
-    if not smtp_user or not smtp_pass:
-        return {"success": False, "error": "SMTP_USER o SMTP_PASS no configurados en Railway"}
+    if not sendgrid_key:
+        return {
+            "success": False,
+            "error": "SENDGRID_API_KEY no está configurado en Railway",
+            "fix": "1) Crea cuenta gratis en sendgrid.com. 2) Settings → API Keys → Create API Key (Mail Send). 3) Añade SENDGRID_API_KEY en Railway Variables."
+        }
 
-    # Remove spaces from app password (Google sometimes shows with spaces)
-    smtp_pass_clean = smtp_pass.replace(" ", "")
+    sender = smtp_user or "patabot@patahogar.com"
 
-    steps = []
     try:
-        steps.append("Conectando a smtp.gmail.com:587...")
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as s:
-            steps.append("✅ Conectado")
-            s.ehlo()
-            steps.append("✅ EHLO OK")
-            s.starttls()
-            steps.append("✅ TLS iniciado")
-            s.ehlo()
-            s.login(smtp_user, smtp_pass_clean)
-            steps.append(f"✅ Login OK con {smtp_user}")
-
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = "🐾 PataBot — Test de email funcionando"
-            msg["From"]    = f"PataBot <{smtp_user}>"
-            msg["To"]      = owner_mail
-            msg.attach(MIMEText(
-                "<h2>✅ PataBot email funciona correctamente</h2>"
-                "<p>Si ves este email, el sistema de aprobación de anuncios está listo.</p>"
-                "<p><b>— PataBot 🐾</b></p>",
-                "html", "utf-8"
-            ))
-            s.sendmail(smtp_user, owner_mail, msg.as_string())
-            steps.append(f"✅ Email enviado a {owner_mail}")
-
-        return {
-            "success": True,
-            "steps": steps,
-            "message": f"Email enviado a {owner_mail}. Revisa también la carpeta SPAM.",
-            "smtp_user": smtp_user,
-            "owner_email": owner_mail
-        }
-
-    except smtplib.SMTPAuthenticationError as e:
-        steps.append(f"❌ Error de autenticación: {e}")
-        return {
-            "success": False, "steps": steps,
-            "error": "Contraseña incorrecta o 2FA no activado",
-            "fix": "1) Activa verificación en 2 pasos en Google. 2) Ve a myaccount.google.com → Seguridad → Contraseñas de aplicaciones → Genera una nueva para 'PataBot'. 3) Copia los 16 caracteres SIN espacios en SMTP_PASS."
-        }
-    except smtplib.SMTPConnectError as e:
-        steps.append(f"❌ Error de conexión: {e}")
-        return {"success": False, "steps": steps, "error": "No se puede conectar a Gmail SMTP. Railway puede estar bloqueando el puerto 587."}
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://api.sendgrid.com/v3/mail/send",
+                headers={
+                    "Authorization": f"Bearer {sendgrid_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "personalizations": [{"to": [{"email": owner_mail}]}],
+                    "from": {"email": sender, "name": "PataBot"},
+                    "subject": "🐾 PataBot — Test email funcionando",
+                    "content": [{
+                        "type": "text/html",
+                        "value": "<h2 style='color:#1a5e35'>✅ PataBot email funciona</h2><p>El sistema de aprobación de anuncios está listo. Cuando PataBot encuentre productos rentables, recibirás un email con botones Aprobar/Rechazar.</p><p><b>— PataBot 🐾</b></p>"
+                    }]
+                }
+            )
+            if r.status_code in (200, 202):
+                return {
+                    "success": True,
+                    "message": f"✅ Email enviado a {owner_mail}. Revisa también la carpeta SPAM.",
+                    "sendgrid_status": r.status_code
+                }
+            else:
+                return {
+                    "success": False,
+                    "sendgrid_status": r.status_code,
+                    "error": r.text[:500],
+                    "fix": "Si el error es 403: verifica el sender en SendGrid → Settings → Sender Authentication. El email del sender debe estar verificado."
+                }
     except Exception as e:
-        steps.append(f"❌ Error: {type(e).__name__}: {e}")
-        return {"success": False, "steps": steps, "error": str(e)}
+        return {"success": False, "error": str(e)}
 
 @app.get("/api/marketing/run-daily-sync")
 async def run_daily_marketing_sync():

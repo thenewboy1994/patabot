@@ -13,9 +13,6 @@ import httpx
 import asyncio
 import logging
 import json
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
@@ -34,12 +31,10 @@ META_BASE           = f"https://graph.facebook.com/{META_API_VERSION}"
 TIKTOK_ACCESS_TOKEN   = os.getenv("TIKTOK_ACCESS_TOKEN", "")
 TIKTOK_ADVERTISER_ID  = os.getenv("TIKTOK_ADVERTISER_ID", "")
 
-# ── Email (for Mohamed approval notifications) ──
-SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER     = os.getenv("SMTP_USER", "")
-SMTP_PASS     = os.getenv("SMTP_PASS", "")
-OWNER_EMAIL   = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
+# ── Email (SendGrid API — works on Railway, no SMTP port blocking) ──
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")
+SMTP_USER        = os.getenv("SMTP_USER", "")   # used as sender address
+OWNER_EMAIL      = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
 
 # ── Storage ──
 _CACHE_DIR    = Path(os.getenv("CACHE_DIR", "."))
@@ -127,27 +122,31 @@ class MarketingManager:
 
     # ─── Email Helper ───
 
-    def _send_email(self, subject: str, html: str):
-        if not SMTP_USER or not SMTP_PASS:
-            logger.warning("SMTP not configured — email not sent")
+    async def _send_email(self, subject: str, html: str):
+        """Send via SendGrid API (HTTPS — never blocked by Railway)."""
+        if not SENDGRID_API_KEY:
+            logger.warning("SENDGRID_API_KEY not set — email not sent. Add it in Railway env vars.")
             return
-        # Google App Passwords sometimes have spaces — remove them
-        smtp_pass_clean = SMTP_PASS.replace(" ", "")
+        sender = SMTP_USER or "patabot@patahogar.com"
         try:
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = subject
-            msg["From"]    = f"PataBot <{SMTP_USER}>"
-            msg["To"]      = OWNER_EMAIL
-            msg.attach(MIMEText(html, "html", "utf-8"))
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
-                s.ehlo()
-                s.starttls()
-                s.ehlo()
-                s.login(SMTP_USER, smtp_pass_clean)
-                s.sendmail(SMTP_USER, OWNER_EMAIL, msg.as_string())
-            logger.info(f"✅ Email sent: {subject}")
-        except smtplib.SMTPAuthenticationError as e:
-            logger.error(f"Email auth error (check App Password): {e}")
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(
+                    "https://api.sendgrid.com/v3/mail/send",
+                    headers={
+                        "Authorization": f"Bearer {SENDGRID_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "personalizations": [{"to": [{"email": OWNER_EMAIL}]}],
+                        "from": {"email": sender, "name": "PataBot"},
+                        "subject": subject,
+                        "content": [{"type": "text/html", "value": html}]
+                    }
+                )
+                if r.status_code in (200, 202):
+                    logger.info(f"✅ Email sent via SendGrid: {subject}")
+                else:
+                    logger.error(f"SendGrid error {r.status_code}: {r.text[:300]}")
         except Exception as e:
             logger.error(f"Email error: {type(e).__name__}: {e}")
 
@@ -308,7 +307,7 @@ class MarketingManager:
           <p><b>— PataBot 🐾</b></p>
         </div>"""
 
-        self._send_email(
+        await self._send_email(
             f"📣 PataBot: {len(proposals)} propuestas de anuncios — ¿Apruebas?",
             html
         )
@@ -358,7 +357,7 @@ class MarketingManager:
             self._save_ads()
 
             logger.info(f"✅ Ad {ad_id} launched on Meta — campaign: {campaign_id}")
-            self._send_email(
+            await self._send_email(
                 f"🚀 Anuncio lanzado: {ad['product_name']}",
                 f"<p>El anuncio <b>{ad['product_name']}</b> está activo en Facebook/Instagram.</p>"
                 f"<p>País: {ad['target_country']} | Presupuesto: €{ad['daily_budget']}/día</p>"
@@ -524,7 +523,7 @@ class MarketingManager:
                             await self._pause_meta_ad(meta_ad_id)
                             ad["status"] = "paused_no_conversions"
                             logger.info(f"Ad {meta_ad_id} paused — spent €{spend} with 0 sales")
-                            self._send_email(
+                            await self._send_email(
                                 f"⚠️ Anuncio pausado: {ad['product_name']}",
                                 f"<p>El anuncio <b>{ad['product_name']}</b> fue pausado automáticamente.</p>"
                                 f"<p>Gasto: €{spend} | Ventas: 0 | Clics: {clicks}</p>"
