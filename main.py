@@ -269,54 +269,45 @@ async def fetch_recommended_products():
 
 @app.get("/api/marketing/test-email")
 async def test_email():
-    """
-    اختبار SendGrid API — يُظهر النتيجة بالتفصيل.
-    """
+    """اختبار Resend API — يُظهر النتيجة بالتفصيل."""
     import httpx
 
-    sendgrid_key = os.environ.get("SENDGRID_API_KEY", "")
-    smtp_user    = os.environ.get("SMTP_USER", "")
-    owner_mail   = os.environ.get("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
+    resend_key = os.environ.get("RESEND_API_KEY", "")
+    owner_mail = os.environ.get("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
 
-    if not sendgrid_key:
+    if not resend_key:
         return {
             "success": False,
-            "error": "SENDGRID_API_KEY no está configurado en Railway",
-            "fix": "1) Crea cuenta gratis en sendgrid.com. 2) Settings → API Keys → Create API Key (Mail Send). 3) Añade SENDGRID_API_KEY en Railway Variables."
+            "error": "RESEND_API_KEY no está configurado en Railway",
+            "fix": "1) Crea cuenta gratis en resend.com. 2) API Keys → Create API Key. 3) Añade RESEND_API_KEY en Railway Variables."
         }
-
-    sender = smtp_user or "patabot@patahogar.com"
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             r = await client.post(
-                "https://api.sendgrid.com/v3/mail/send",
+                "https://api.resend.com/emails",
                 headers={
-                    "Authorization": f"Bearer {sendgrid_key}",
+                    "Authorization": f"Bearer {resend_key}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "personalizations": [{"to": [{"email": owner_mail}]}],
-                    "from": {"email": sender, "name": "PataBot"},
+                    "from": "PataBot <onboarding@resend.dev>",
+                    "to": [owner_mail],
                     "subject": "🐾 PataBot — Test email funcionando",
-                    "content": [{
-                        "type": "text/html",
-                        "value": "<h2 style='color:#1a5e35'>✅ PataBot email funciona</h2><p>El sistema de aprobación de anuncios está listo. Cuando PataBot encuentre productos rentables, recibirás un email con botones Aprobar/Rechazar.</p><p><b>— PataBot 🐾</b></p>"
-                    }]
+                    "html": "<h2 style='color:#1a5e35'>✅ PataBot email funciona</h2><p>El sistema de aprobación de anuncios está listo.<br>Cuando PataBot encuentre productos rentables, recibirás un email con botones <b>Aprobar / Rechazar</b>.</p><p><b>— PataBot 🐾</b></p>"
                 }
             )
-            if r.status_code in (200, 202):
+            if r.status_code in (200, 201):
                 return {
                     "success": True,
                     "message": f"✅ Email enviado a {owner_mail}. Revisa también la carpeta SPAM.",
-                    "sendgrid_status": r.status_code
+                    "resend_status": r.status_code
                 }
             else:
                 return {
                     "success": False,
-                    "sendgrid_status": r.status_code,
-                    "error": r.text[:500],
-                    "fix": "Si el error es 403: verifica el sender en SendGrid → Settings → Sender Authentication. El email del sender debe estar verificado."
+                    "resend_status": r.status_code,
+                    "error": r.text[:500]
                 }
     except Exception as e:
         return {"success": False, "error": str(e)}

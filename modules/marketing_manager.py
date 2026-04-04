@@ -31,10 +31,9 @@ META_BASE           = f"https://graph.facebook.com/{META_API_VERSION}"
 TIKTOK_ACCESS_TOKEN   = os.getenv("TIKTOK_ACCESS_TOKEN", "")
 TIKTOK_ADVERTISER_ID  = os.getenv("TIKTOK_ADVERTISER_ID", "")
 
-# ── Email (SendGrid API — works on Railway, no SMTP port blocking) ──
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")
-SMTP_USER        = os.getenv("SMTP_USER", "")   # used as sender address
-OWNER_EMAIL      = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
+# ── Email (Resend API — works on Railway, no SMTP port blocking) ──
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+OWNER_EMAIL    = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
 
 # ── Storage ──
 _CACHE_DIR    = Path(os.getenv("CACHE_DIR", "."))
@@ -123,30 +122,29 @@ class MarketingManager:
     # ─── Email Helper ───
 
     async def _send_email(self, subject: str, html: str):
-        """Send via SendGrid API (HTTPS — never blocked by Railway)."""
-        if not SENDGRID_API_KEY:
-            logger.warning("SENDGRID_API_KEY not set — email not sent. Add it in Railway env vars.")
+        """Send via Resend API (HTTPS port 443 — never blocked by Railway)."""
+        if not RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY not set — email not sent. Add it in Railway env vars.")
             return
-        sender = SMTP_USER or "patabot@patahogar.com"
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.post(
-                    "https://api.sendgrid.com/v3/mail/send",
+                    "https://api.resend.com/emails",
                     headers={
-                        "Authorization": f"Bearer {SENDGRID_API_KEY}",
+                        "Authorization": f"Bearer {RESEND_API_KEY}",
                         "Content-Type": "application/json"
                     },
                     json={
-                        "personalizations": [{"to": [{"email": OWNER_EMAIL}]}],
-                        "from": {"email": sender, "name": "PataBot"},
+                        "from": "PataBot <onboarding@resend.dev>",
+                        "to": [OWNER_EMAIL],
                         "subject": subject,
-                        "content": [{"type": "text/html", "value": html}]
+                        "html": html
                     }
                 )
-                if r.status_code in (200, 202):
-                    logger.info(f"✅ Email sent via SendGrid: {subject}")
+                if r.status_code in (200, 201):
+                    logger.info(f"✅ Email sent via Resend: {subject}")
                 else:
-                    logger.error(f"SendGrid error {r.status_code}: {r.text[:300]}")
+                    logger.error(f"Resend error {r.status_code}: {r.text[:300]}")
         except Exception as e:
             logger.error(f"Email error: {type(e).__name__}: {e}")
 
