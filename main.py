@@ -267,6 +267,83 @@ async def fetch_recommended_products():
         "message": "Product fetch started in background. Check /api/products/enrichment-status."
     }
 
+@app.get("/api/marketing/test-meta-adset")
+async def test_meta_adset():
+    """اختبار إنشاء adset خطوة بخطوة — يُظهر الخطأ الكامل من Meta."""
+    import httpx
+    token    = os.environ.get("META_ACCESS_TOKEN", "")
+    account  = os.environ.get("META_AD_ACCOUNT_ID", "")
+    pixel_id = os.environ.get("META_PIXEL_ID", "")
+
+    if not token or not account:
+        return {"error": "META_ACCESS_TOKEN or META_AD_ACCOUNT_ID missing"}
+
+    results = {}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+
+        # Step 1: create PAUSED campaign
+        r = await client.post(
+            f"https://graph.facebook.com/v19.0/{account}/campaigns",
+            params={"access_token": token},
+            json={
+                "name": "PataBot ADSET-TEST — delete me",
+                "objective": "OUTCOME_SALES",
+                "status": "PAUSED",
+                "special_ad_categories": [],
+                "is_adset_budget_sharing_enabled": False
+            }
+        )
+        results["campaign"] = {"status": r.status_code, "body": r.json()}
+        if r.status_code != 200:
+            return results
+        campaign_id = r.json()["id"]
+
+        # Step 2: try adset WITH pixel
+        adset_payload_with_pixel = {
+            "name": "Test AdSet WITH pixel",
+            "campaign_id": campaign_id,
+            "daily_budget": 500,
+            "billing_event": "IMPRESSIONS",
+            "optimization_goal": "OFFSITE_CONVERSIONS",
+            "destination_type": "WEBSITE",
+            "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "age_max": 55},
+            "status": "PAUSED",
+            "promoted_object": {"pixel_id": pixel_id, "custom_event_type": "PURCHASE"}
+        }
+        r2 = await client.post(
+            f"https://graph.facebook.com/v19.0/{account}/adsets",
+            params={"access_token": token},
+            json=adset_payload_with_pixel
+        )
+        results["adset_with_pixel"] = {"status": r2.status_code, "body": r2.json()}
+
+        # Step 3: try adset WITHOUT pixel (LINK_CLICKS)
+        adset_payload_no_pixel = {
+            "name": "Test AdSet NO pixel",
+            "campaign_id": campaign_id,
+            "daily_budget": 500,
+            "billing_event": "LINK_CLICKS",
+            "optimization_goal": "LINK_CLICKS",
+            "destination_type": "WEBSITE",
+            "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "age_max": 55},
+            "status": "PAUSED",
+        }
+        r3 = await client.post(
+            f"https://graph.facebook.com/v19.0/{account}/adsets",
+            params={"access_token": token},
+            json=adset_payload_no_pixel
+        )
+        results["adset_no_pixel"] = {"status": r3.status_code, "body": r3.json()}
+
+        # Cleanup: delete test campaign
+        await client.delete(
+            f"https://graph.facebook.com/v19.0/{campaign_id}",
+            params={"access_token": token}
+        )
+        results["cleanup"] = f"Campaign {campaign_id} deleted"
+
+    return {"pixel_id_used": pixel_id, "account": account, "results": results}
+
 @app.get("/api/marketing/test-meta")
 async def test_meta():
     """تشخيص Meta API — يُظهر الخطأ الحقيقي من Meta."""
