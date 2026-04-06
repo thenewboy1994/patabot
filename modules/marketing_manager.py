@@ -400,7 +400,8 @@ class MarketingManager:
                     "objective": "OUTCOME_TRAFFIC",
                     "status":    "ACTIVE",
                     "special_ad_categories": [],
-                    "is_adset_budget_sharing_enabled": False
+                    "is_adset_budget_sharing_enabled": False,
+                    "buying_type": "AUCTION"
                 }
             )
             if r.status_code == 200:
@@ -419,13 +420,14 @@ class MarketingManager:
             "age_max": 55,
         }
 
-        # LINK_CLICKS — no pixel required, works immediately
+        # LINK_CLICKS + LOWEST_COST automatic bidding — no pixel required
         payload = {
             "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
             "campaign_id":       campaign_id,
             "daily_budget":      daily_budget_cents,
-            "billing_event":     "LINK_CLICKS",
+            "billing_event":     "IMPRESSIONS",
             "optimization_goal": "LINK_CLICKS",
+            "bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
             "destination_type":  "WEBSITE",
             "targeting":         targeting,
             "status":            "ACTIVE",
