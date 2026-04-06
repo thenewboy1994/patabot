@@ -417,11 +417,6 @@ class MarketingManager:
             "geo_locations": {"countries": [country]},
             "age_min": 22,
             "age_max": 55,
-            "interests": [
-                {"id": "6003107902433", "name": "Pets"},
-                {"id": "6003200395100", "name": "Home decoration"},
-                {"id": "6003139266461", "name": "Online shopping"},
-            ]
         }
 
         # Build payload — pixel goes in promoted_object, not as a top-level field
