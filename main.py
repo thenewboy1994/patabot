@@ -304,7 +304,8 @@ async def test_meta():
                 "name": "PataBot TEST — delete me",
                 "objective": "OUTCOME_SALES",
                 "status": "PAUSED",
-                "special_ad_categories": []
+                "special_ad_categories": [],
+                "is_adset_budget_sharing_enabled": False
             }
         )
         results["campaign_test"] = {"status": r.status_code, "response": r.json()}

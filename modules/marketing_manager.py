@@ -393,7 +393,8 @@ class MarketingManager:
                     "name":      f"PataHogar — {ad['product_name'][:40]} ({ad['target_country']})",
                     "objective": "OUTCOME_SALES",
                     "status":    "ACTIVE",
-                    "special_ad_categories": []
+                    "special_ad_categories": [],
+                    "is_adset_budget_sharing_enabled": False
                 }
             )
             if r.status_code == 200:
