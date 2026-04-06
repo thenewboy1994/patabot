@@ -418,6 +418,7 @@ class MarketingManager:
             "geo_locations": {"countries": [country]},
             "age_min": 22,
             "age_max": 55,
+            "targeting_automation": {"advantage_audience": 1},
         }
 
         # OUTCOME_SALES + Pixel — full conversion tracking (DSA required for EU)
@@ -437,7 +438,6 @@ class MarketingManager:
             },
             "dsa_beneficiary":   "PataHogar",
             "dsa_payor":         "PataHogar",
-            "targeting_automation": {"advantage_audience": 1},
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
