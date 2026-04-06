@@ -342,7 +342,13 @@ class MarketingManager:
 
             adset_id = await self._meta_create_adset(ad, campaign_id)
             if not adset_id:
-                return {"success": False, "error": "Failed to create Meta ad set"}
+                # Delete the orphan campaign before returning
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as cl:
+                        await cl.delete(f"{META_BASE}/{campaign_id}", params={"access_token": META_ACCESS_TOKEN})
+                except Exception:
+                    pass
+                return {"success": False, "error": "Failed to create Meta ad set — check Railway logs for Meta error details"}
 
             ad_creative_id = await self._meta_create_creative(ad)
             if not ad_creative_id:
@@ -418,24 +424,32 @@ class MarketingManager:
             ]
         }
 
+        # Build payload — pixel goes in promoted_object, not as a top-level field
+        payload = {
+            "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
+            "campaign_id":       campaign_id,
+            "daily_budget":      daily_budget_cents,
+            "billing_event":     "IMPRESSIONS",
+            "optimization_goal": "OFFSITE_CONVERSIONS",
+            "destination_type":  "WEBSITE",
+            "targeting":         targeting,
+            "status":            "ACTIVE",
+        }
+        if META_PIXEL_ID:
+            payload["promoted_object"] = {
+                "pixel_id":          META_PIXEL_ID,
+                "custom_event_type": "PURCHASE"
+            }
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 f"{META_BASE}/{META_AD_ACCOUNT_ID}/adsets",
                 params={"access_token": META_ACCESS_TOKEN},
-                json={
-                    "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
-                    "campaign_id":       campaign_id,
-                    "daily_budget":      daily_budget_cents,
-                    "billing_event":     "IMPRESSIONS",
-                    "optimization_goal": "OFFSITE_CONVERSIONS",
-                    "targeting":         targeting,
-                    "status":            "ACTIVE",
-                    "pixel_id":          META_PIXEL_ID if META_PIXEL_ID else None,
-                }
+                json=payload
             )
             if r.status_code == 200:
                 return r.json().get("id")
-            logger.error(f"Meta adset error: {r.text[:300]}")
+            logger.error(f"Meta adset error {r.status_code}: {r.text[:500]}")
             return None
 
     async def _meta_create_creative(self, ad: Dict) -> Optional[str]:
