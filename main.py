@@ -302,7 +302,7 @@ async def test_meta():
             params={"access_token": token},
             json={
                 "name": "PataBot TEST — delete me",
-                "objective": "OUTCOME_SALES",
+                "objective": "OUTCOME_TRAFFIC",
                 "status": "PAUSED",
                 "special_ad_categories": [],
                 "is_adset_budget_sharing_enabled": False

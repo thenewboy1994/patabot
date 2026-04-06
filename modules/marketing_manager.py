@@ -397,7 +397,7 @@ class MarketingManager:
                 params={"access_token": META_ACCESS_TOKEN},
                 json={
                     "name":      f"PataHogar — {ad['product_name'][:40]} ({ad['target_country']})",
-                    "objective": "OUTCOME_SALES",
+                    "objective": "OUTCOME_TRAFFIC",
                     "status":    "ACTIVE",
                     "special_ad_categories": [],
                     "is_adset_budget_sharing_enabled": False
@@ -419,22 +419,17 @@ class MarketingManager:
             "age_max": 55,
         }
 
-        # Build payload — pixel goes in promoted_object, not as a top-level field
+        # LINK_CLICKS — no pixel required, works immediately
         payload = {
             "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
             "campaign_id":       campaign_id,
             "daily_budget":      daily_budget_cents,
-            "billing_event":     "IMPRESSIONS",
-            "optimization_goal": "OFFSITE_CONVERSIONS",
+            "billing_event":     "LINK_CLICKS",
+            "optimization_goal": "LINK_CLICKS",
             "destination_type":  "WEBSITE",
             "targeting":         targeting,
             "status":            "ACTIVE",
         }
-        if META_PIXEL_ID:
-            payload["promoted_object"] = {
-                "pixel_id":          META_PIXEL_ID,
-                "custom_event_type": "PURCHASE"
-            }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
