@@ -190,6 +190,9 @@ class MarketingManager:
         """اختيار المنتجات الأفضل للإعلان."""
         scored = []
         winning_keywords = research.get("winning_keywords", [])
+        # get_research_status() sometimes returns a count (int) instead of a list
+        if not isinstance(winning_keywords, list):
+            winning_keywords = []
 
         for p in products[:100]:
             if not p.get("image_url"):
@@ -251,6 +254,8 @@ class MarketingManager:
     def _pick_target_country(self, product: Dict, research: Dict) -> str:
         """اختيار أفضل دولة للإعلان بناءً على بحث السوق."""
         recommendations = research.get("recommendations", [])
+        if not isinstance(recommendations, list):
+            recommendations = []
         name_lower = product.get("name", "").lower()
 
         # ابحث عن تطابق في توصيات البحث
