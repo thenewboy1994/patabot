@@ -437,6 +437,7 @@ class MarketingManager:
             },
             "dsa_beneficiary":   "PataHogar",
             "dsa_payor":         "PataHogar",
+            "targeting_automation": {"advantage_audience": 1},
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
