@@ -420,7 +420,7 @@ class MarketingManager:
             "age_max": 55,
         }
 
-        # OUTCOME_SALES + Pixel — full conversion tracking
+        # OUTCOME_SALES + Pixel — full conversion tracking (DSA required for EU)
         payload = {
             "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
             "campaign_id":       campaign_id,
@@ -434,7 +434,9 @@ class MarketingManager:
             "promoted_object": {
                 "pixel_id":          META_PIXEL_ID,
                 "custom_event_type": "PURCHASE"
-            }
+            },
+            "dsa_beneficiary":   "PataHogar",
+            "dsa_payor":         "PataHogar",
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:

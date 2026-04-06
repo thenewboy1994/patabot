@@ -310,7 +310,9 @@ async def test_meta_adset():
             "destination_type": "WEBSITE",
             "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "age_max": 55},
             "status": "PAUSED",
-            "promoted_object": {"pixel_id": pixel_id, "custom_event_type": "PURCHASE"}
+            "promoted_object": {"pixel_id": pixel_id, "custom_event_type": "PURCHASE"},
+            "dsa_beneficiary": "PataHogar",
+            "dsa_payor": "PataHogar",
         }
         r2 = await client.post(
             f"https://graph.facebook.com/v19.0/{account}/adsets",
