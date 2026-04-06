@@ -281,7 +281,7 @@ async def test_meta_adset():
     results = {}
     async with httpx.AsyncClient(timeout=30.0) as client:
 
-        # Step 1: create PAUSED campaign
+        # Step 1: create PAUSED campaign (OUTCOME_SALES)
         r = await client.post(
             f"https://graph.facebook.com/v19.0/{account}/campaigns",
             params={"access_token": token},
@@ -290,7 +290,8 @@ async def test_meta_adset():
                 "objective": "OUTCOME_SALES",
                 "status": "PAUSED",
                 "special_ad_categories": [],
-                "is_adset_budget_sharing_enabled": False
+                "is_adset_budget_sharing_enabled": False,
+                "buying_type": "AUCTION"
             }
         )
         results["campaign"] = {"status": r.status_code, "body": r.json()}
@@ -298,13 +299,14 @@ async def test_meta_adset():
             return results
         campaign_id = r.json()["id"]
 
-        # Step 2: try adset WITH pixel
+        # Step 2: adset WITH pixel + bid_strategy (full conversion tracking)
         adset_payload_with_pixel = {
             "name": "Test AdSet WITH pixel",
             "campaign_id": campaign_id,
             "daily_budget": 500,
             "billing_event": "IMPRESSIONS",
             "optimization_goal": "OFFSITE_CONVERSIONS",
+            "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
             "destination_type": "WEBSITE",
             "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "age_max": 55},
             "status": "PAUSED",
@@ -316,24 +318,7 @@ async def test_meta_adset():
             json=adset_payload_with_pixel
         )
         results["adset_with_pixel"] = {"status": r2.status_code, "body": r2.json()}
-
-        # Step 3: try adset WITHOUT pixel (LINK_CLICKS)
-        adset_payload_no_pixel = {
-            "name": "Test AdSet NO pixel",
-            "campaign_id": campaign_id,
-            "daily_budget": 500,
-            "billing_event": "LINK_CLICKS",
-            "optimization_goal": "LINK_CLICKS",
-            "destination_type": "WEBSITE",
-            "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "age_max": 55},
-            "status": "PAUSED",
-        }
-        r3 = await client.post(
-            f"https://graph.facebook.com/v19.0/{account}/adsets",
-            params={"access_token": token},
-            json=adset_payload_no_pixel
-        )
-        results["adset_no_pixel"] = {"status": r3.status_code, "body": r3.json()}
+        results["adset_no_pixel"] = {"skipped": "Pixel is working — no need to test without pixel"}
 
         # Cleanup: delete test campaign
         await client.delete(

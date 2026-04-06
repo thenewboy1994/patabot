@@ -397,7 +397,7 @@ class MarketingManager:
                 params={"access_token": META_ACCESS_TOKEN},
                 json={
                     "name":      f"PataHogar — {ad['product_name'][:40]} ({ad['target_country']})",
-                    "objective": "OUTCOME_TRAFFIC",
+                    "objective": "OUTCOME_SALES",
                     "status":    "ACTIVE",
                     "special_ad_categories": [],
                     "is_adset_budget_sharing_enabled": False,
@@ -420,17 +420,21 @@ class MarketingManager:
             "age_max": 55,
         }
 
-        # LINK_CLICKS + LOWEST_COST automatic bidding — no pixel required
+        # OUTCOME_SALES + Pixel — full conversion tracking
         payload = {
             "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
             "campaign_id":       campaign_id,
             "daily_budget":      daily_budget_cents,
             "billing_event":     "IMPRESSIONS",
-            "optimization_goal": "LINK_CLICKS",
+            "optimization_goal": "OFFSITE_CONVERSIONS",
             "bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
             "destination_type":  "WEBSITE",
             "targeting":         targeting,
             "status":            "ACTIVE",
+            "promoted_object": {
+                "pixel_id":          META_PIXEL_ID,
+                "custom_event_type": "PURCHASE"
+            }
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
