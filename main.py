@@ -267,6 +267,67 @@ async def fetch_recommended_products():
         "message": "Product fetch started in background. Check /api/products/enrichment-status."
     }
 
+@app.get("/api/marketing/test-meta")
+async def test_meta():
+    """تشخيص Meta API — يُظهر الخطأ الحقيقي من Meta."""
+    import httpx
+    token     = os.environ.get("META_ACCESS_TOKEN", "")
+    account   = os.environ.get("META_AD_ACCOUNT_ID", "")
+    page_id   = os.environ.get("META_PAGE_ID", "")
+    pixel_id  = os.environ.get("META_PIXEL_ID", "")
+
+    if not token or not account:
+        return {"error": "META_ACCESS_TOKEN or META_AD_ACCOUNT_ID missing in Railway"}
+
+    results = {}
+    async with httpx.AsyncClient(timeout=20.0) as client:
+
+        # 1. Check token validity
+        r = await client.get(
+            "https://graph.facebook.com/v19.0/me",
+            params={"access_token": token, "fields": "id,name"}
+        )
+        results["token_check"] = {"status": r.status_code, "response": r.json()}
+
+        # 2. Check ad account
+        r = await client.get(
+            f"https://graph.facebook.com/v19.0/{account}",
+            params={"access_token": token, "fields": "id,name,account_status,currency,timezone_name"}
+        )
+        results["ad_account"] = {"status": r.status_code, "response": r.json()}
+
+        # 3. Try creating a PAUSED test campaign to see real error
+        r = await client.post(
+            f"https://graph.facebook.com/v19.0/{account}/campaigns",
+            params={"access_token": token},
+            json={
+                "name": "PataBot TEST — delete me",
+                "objective": "OUTCOME_SALES",
+                "status": "PAUSED",
+                "special_ad_categories": []
+            }
+        )
+        results["campaign_test"] = {"status": r.status_code, "response": r.json()}
+
+        # If campaign created, delete it immediately
+        if r.status_code == 200 and r.json().get("id"):
+            cid = r.json()["id"]
+            await client.delete(
+                f"https://graph.facebook.com/v19.0/{cid}",
+                params={"access_token": token}
+            )
+            results["campaign_test"]["note"] = f"Test campaign {cid} created and deleted"
+
+    return {
+        "config": {
+            "account": account,
+            "page_id": page_id or "NOT SET",
+            "pixel_id": pixel_id or "NOT SET",
+            "token_prefix": token[:20] + "..."
+        },
+        "results": results
+    }
+
 @app.get("/api/marketing/test-email")
 async def test_email():
     """اختبار Resend API — يُظهر النتيجة بالتفصيل."""
