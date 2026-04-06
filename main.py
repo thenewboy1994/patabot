@@ -308,7 +308,7 @@ async def test_meta_adset():
             "optimization_goal": "OFFSITE_CONVERSIONS",
             "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
             "destination_type": "WEBSITE",
-            "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "age_max": 55, "targeting_automation": {"advantage_audience": 1}},
+            "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22, "targeting_automation": {"advantage_audience": 1}},
             "status": "PAUSED",
             "promoted_object": {"pixel_id": pixel_id, "custom_event_type": "PURCHASE"},
             "dsa_beneficiary": "PataHogar",

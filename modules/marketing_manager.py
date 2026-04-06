@@ -417,7 +417,6 @@ class MarketingManager:
         targeting = {
             "geo_locations": {"countries": [country]},
             "age_min": 22,
-            "age_max": 55,
             "targeting_automation": {"advantage_audience": 1},
         }
 
