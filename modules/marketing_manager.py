@@ -93,6 +93,7 @@ class MarketingManager:
         self.pending_ads: List[Dict] = []
         self.active_ads: List[Dict] = []
         self.organic_posts: List[Dict] = []
+        self.default_daily_budget: float = float(os.getenv("DEFAULT_AD_BUDGET", "10.0"))
         self._load_ads()
 
     # ─── Persistence ───
@@ -224,7 +225,7 @@ class MarketingManager:
         template = AD_TEMPLATES.get(lang, AD_TEMPLATES["es"])
         product_name = product.get("name", "Producto")[:50]
 
-        daily_budget = 5.0  # ميزانية يومية ابتدائية 5€
+        daily_budget = self.default_daily_budget
 
         proposal = {
             "id":             ad_id,
@@ -551,6 +552,41 @@ class MarketingManager:
                     logger.warning(f"Performance check error for {meta_ad_id}: {e}")
 
         self._save_ads()
+
+    async def update_ad_budget(self, ad_id: str, new_budget: float) -> Dict:
+        """رفع أو تغيير ميزانية إعلان نشط على Meta."""
+        ad = next((a for a in self.active_ads if a["id"] == ad_id), None)
+        if not ad:
+            # ابحث في pending أيضاً
+            ad = next((a for a in self.pending_ads if a["id"] == ad_id), None)
+        if not ad:
+            return {"success": False, "error": f"Ad {ad_id} not found"}
+
+        ad["daily_budget"] = new_budget
+        meta_adset_id = ad.get("meta_adset_id")
+
+        if meta_adset_id and META_ACCESS_TOKEN:
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.post(
+                        f"{META_BASE}/{meta_adset_id}",
+                        params={"access_token": META_ACCESS_TOKEN},
+                        json={"daily_budget": int(new_budget * 100)}
+                    )
+                if r.status_code == 200:
+                    self._save_ads()
+                    logger.info(f"Budget updated: {ad_id} → €{new_budget}/day")
+                    return {"success": True, "ad_id": ad_id, "new_budget": new_budget,
+                            "message": f"Presupuesto actualizado a €{new_budget}/día en Meta"}
+                else:
+                    return {"success": False, "meta_error": r.text[:300]}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+        else:
+            # Ad not on Meta yet — just update locally
+            self._save_ads()
+            return {"success": True, "ad_id": ad_id, "new_budget": new_budget,
+                    "message": f"Presupuesto actualizado localmente a €{new_budget}/día (no hay adset Meta activo)"}
 
     async def _pause_meta_ad(self, meta_ad_id: str):
         """إيقاف إعلان على Meta."""

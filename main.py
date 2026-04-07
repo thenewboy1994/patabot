@@ -539,6 +539,26 @@ async def approve_ad_post(request: Request):
         return await marketing_manager.launch_approved_ad(ad_id)
     return await marketing_manager.reject_ad(ad_id)
 
+@app.get("/api/marketing/update-budget")
+async def update_ad_budget(ad_id: str = Query(""), budget: float = Query(10.0)):
+    """
+    رفع أو تغيير ميزانية إعلان نشط على Meta.
+    GET /api/marketing/update-budget?ad_id=AD-xxx&budget=15
+    """
+    if not ad_id:
+        return JSONResponse(status_code=400, content={"error": "ad_id required"})
+    result = await marketing_manager.update_ad_budget(ad_id, budget)
+    return result
+
+@app.get("/api/marketing/set-default-budget")
+async def set_default_budget(budget: float = Query(10.0)):
+    """
+    تغيير الميزانية الافتراضية للإعلانات الجديدة.
+    GET /api/marketing/set-default-budget?budget=15
+    """
+    marketing_manager.default_daily_budget = budget
+    return {"status": "ok", "new_default_budget": budget, "message": f"الإعلانات الجديدة ستكون بميزانية €{budget}/يوم"}
+
 @app.post("/api/marketing/propose-ad")
 async def propose_ad(request: Request):
     data = await request.json()
@@ -621,7 +641,10 @@ async def security_status():
 
 @app.get("/api/report/daily")
 async def daily_report():
-    return await report_manager.generate_daily_report()
+    products = await product_manager.get_current_products()
+    orders   = order_manager.get_order_stats()
+    marketing = await marketing_manager.get_campaigns_status()
+    return await report_manager.generate_daily_report(products, orders, marketing)
 
 @app.post("/api/chat")
 async def chat_with_bot(request: Request):
@@ -694,7 +717,10 @@ async def hourly_security_check():
 
 async def send_daily_report():
     try:
-        report = await report_manager.generate_daily_report()
+        products  = await product_manager.get_current_products()
+        orders    = order_manager.get_order_stats()
+        marketing = await marketing_manager.get_campaigns_status()
+        report    = await report_manager.generate_daily_report(products, orders, marketing)
         await report_manager.send_email_report(report)
     except Exception as e:
         logger.error(f"Daily report failed: {e}")
