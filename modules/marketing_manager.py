@@ -39,17 +39,27 @@ OWNER_EMAIL    = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
 _CACHE_DIR    = Path(os.getenv("CACHE_DIR", "."))
 ADS_FILE      = _CACHE_DIR / "ads_cache.json"
 
-# ── European targets ──
+# ── All ad target countries (EU + CH, DK, LI) ──
 EU_TARGETS = {
-    "ES": {"lang": "es", "name": "España",      "currency": "EUR"},
-    "FR": {"lang": "fr", "name": "France",       "currency": "EUR"},
-    "DE": {"lang": "de", "name": "Deutschland",  "currency": "EUR"},
-    "NL": {"lang": "nl", "name": "Nederland",    "currency": "EUR"},
-    "IT": {"lang": "it", "name": "Italia",       "currency": "EUR"},
-    "BE": {"lang": "fr", "name": "Belgique",     "currency": "EUR"},
-    "PT": {"lang": "pt", "name": "Portugal",     "currency": "EUR"},
-    "AT": {"lang": "de", "name": "Österreich",   "currency": "EUR"},
+    "ES": {"lang": "es", "name": "España",       "currency": "EUR"},
+    "FR": {"lang": "fr", "name": "France",        "currency": "EUR"},
+    "DE": {"lang": "de", "name": "Deutschland",   "currency": "EUR"},
+    "NL": {"lang": "nl", "name": "Nederland",     "currency": "EUR"},
+    "BE": {"lang": "fr", "name": "Belgique",      "currency": "EUR"},
+    "LU": {"lang": "fr", "name": "Luxembourg",    "currency": "EUR"},
+    "IT": {"lang": "it", "name": "Italia",        "currency": "EUR"},
+    "CH": {"lang": "de", "name": "Schweiz",       "currency": "CHF"},
+    "DK": {"lang": "da", "name": "Danmark",       "currency": "DKK"},
+    "LI": {"lang": "de", "name": "Liechtenstein", "currency": "CHF"},
+    "AT": {"lang": "de", "name": "Österreich",    "currency": "EUR"},
+    "PT": {"lang": "pt", "name": "Portugal",      "currency": "EUR"},
 }
+
+# Countries for ad campaigns (Mohamed's selection)
+AD_TARGET_COUNTRIES = ["ES", "FR", "DE", "NL", "BE", "LU", "IT", "CH", "DK", "LI"]
+
+# DSA required for these EU member states
+DSA_REQUIRED_COUNTRIES = {"ES", "FR", "DE", "NL", "BE", "LU", "IT", "DK", "AT", "PT"}
 
 # ── Ad copy templates (8 languages) ──
 AD_TEMPLATES = {
@@ -94,6 +104,7 @@ class MarketingManager:
         self.active_ads: List[Dict] = []
         self.organic_posts: List[Dict] = []
         self.default_daily_budget: float = float(os.getenv("DEFAULT_AD_BUDGET", "10.0"))
+        self.proposed_tracker: Dict[str, str] = {}  # product_id → ISO timestamp
         self._load_ads()
 
     # ─── Persistence ───
@@ -102,20 +113,23 @@ class MarketingManager:
         try:
             if ADS_FILE.exists():
                 data = json.loads(ADS_FILE.read_text(encoding="utf-8"))
-                self.campaigns    = data.get("campaigns", [])
-                self.pending_ads  = data.get("pending_ads", [])
-                self.active_ads   = data.get("active_ads", [])
-                logger.info(f"Loaded {len(self.campaigns)} campaigns, {len(self.active_ads)} active ads")
+                self.campaigns       = data.get("campaigns", [])
+                self.pending_ads     = data.get("pending_ads", [])
+                self.active_ads      = data.get("active_ads", [])
+                self.proposed_tracker = data.get("proposed_tracker", {})
+                logger.info(f"Loaded {len(self.campaigns)} campaigns, {len(self.active_ads)} active ads, "
+                            f"{len(self.proposed_tracker)} tracked proposals")
         except Exception as e:
             logger.error(f"Ads load error: {e}")
 
     def _save_ads(self):
         try:
             ADS_FILE.write_text(json.dumps({
-                "campaigns":   self.campaigns,
-                "pending_ads": self.pending_ads,
-                "active_ads":  self.active_ads,
-                "saved_at":    datetime.now().isoformat()
+                "campaigns":        self.campaigns,
+                "pending_ads":      self.pending_ads,
+                "active_ads":       self.active_ads,
+                "proposed_tracker": self.proposed_tracker,
+                "saved_at":         datetime.now().isoformat()
             }, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             logger.error(f"Ads save error: {e}")
@@ -188,31 +202,38 @@ class MarketingManager:
         return {"status": "done", "proposals": len(proposals)}
 
     def _select_ad_candidates(self, products: List[Dict], research: Dict) -> List[Dict]:
-        """اختيار المنتجات الأفضل للإعلان."""
-        scored = []
+        """اختيار المنتجات الأفضل للإعلان — مع تجنب التكرار."""
+        # Build set of recently proposed product IDs (last 7 days)
+        recently_proposed = set()
+        for pid, ts in self.proposed_tracker.items():
+            try:
+                age = (datetime.now() - datetime.fromisoformat(ts)).days
+                if age < 7:
+                    recently_proposed.add(str(pid))
+            except Exception:
+                pass
+
         winning_keywords = research.get("winning_keywords", [])
-        # get_research_status() sometimes returns a count (int) instead of a list
         if not isinstance(winning_keywords, list):
             winning_keywords = []
 
-        for p in products[:100]:
+        scored = []
+        for p in products[:200]:
             if not p.get("image_url"):
-                continue  # بدون صورة لا إعلان
+                continue
+            if str(p.get("id", "")) in recently_proposed:
+                continue  # already proposed this week → skip
 
-            score = p.get("profit", 0) * 10  # الربح أهم معيار
-
-            # زيادة النقطة إذا يطابق ترند
+            score = p.get("profit", 0) * 10
             name_lower = p.get("name", "").lower()
             for kw in winning_keywords:
                 if str(kw).lower() in name_lower:
                     score += 20
-
-            # المنتجات ذات الهامش الأعلى أولاً
             score += p.get("margin_pct", 30)
-
             scored.append({"product": p, "score": score})
 
         scored.sort(key=lambda x: x["score"], reverse=True)
+        logger.info(f"Candidates: {len(scored)} new products (skipped {len(recently_proposed)} recently proposed)")
         return [s["product"] for s in scored[:5]]
 
     async def _create_ad_proposal(self, product: Dict, research: Dict) -> Optional[Dict]:
@@ -228,28 +249,31 @@ class MarketingManager:
         daily_budget = self.default_daily_budget
 
         proposal = {
-            "id":             ad_id,
-            "product_id":     product.get("id"),
-            "product_name":   product_name,
-            "product_image":  product.get("image_url", ""),
-            "selling_price":  product.get("selling_price", 0),
-            "profit":         product.get("profit", 0),
-            "target_country": target_country,
-            "target_lang":    lang,
-            "headline":       template["headline"].format(product_name=product_name),
-            "body":           template["body"],
-            "cta":            template["cta"],
-            "daily_budget":   daily_budget,
-            "estimated_reach": int(daily_budget * 400),  # ~400 أشخاص لكل يورو
-            "estimated_clicks": int(daily_budget * 20),  # ~20 نقرة لكل يورو
-            "platform":       "facebook_instagram",
-            "status":         "pending_approval",
-            "created_at":     datetime.now().isoformat(),
+            "id":               ad_id,
+            "product_id":       product.get("id"),
+            "product_name":     product_name,
+            "product_image":    product.get("image_url", ""),
+            "selling_price":    product.get("selling_price", 0),
+            "profit":           product.get("profit", 0),
+            "target_country":   target_country,
+            "target_lang":      lang,
+            "headline":         template["headline"].format(product_name=product_name),
+            "body":             template["body"],
+            "cta":              template["cta"],
+            "daily_budget":     daily_budget,
+            "target_countries": AD_TARGET_COUNTRIES,  # all 10 countries
+            "estimated_reach":  int(daily_budget * 400 * len(AD_TARGET_COUNTRIES)),
+            "estimated_clicks": int(daily_budget * 20 * len(AD_TARGET_COUNTRIES)),
+            "platform":         "facebook_instagram",
+            "status":           "pending_approval",
+            "created_at":       datetime.now().isoformat(),
         }
 
         self.pending_ads.append(proposal)
+        # Mark product as proposed (prevents duplicates for 7 days)
+        self.proposed_tracker[str(product.get("id", ""))] = datetime.now().isoformat()
         self._save_ads()
-        logger.info(f"Ad proposal created: {ad_id} for {product_name} → {target_country}")
+        logger.info(f"Ad proposal created: {ad_id} for {product_name} → {AD_TARGET_COUNTRIES}")
         return proposal
 
     def _pick_target_country(self, product: Dict, research: Dict) -> str:
@@ -321,59 +345,88 @@ class MarketingManager:
     # ════════════════════════════════════════════════════════
 
     async def launch_approved_ad(self, ad_id: str) -> Dict:
-        """إطلاق إعلان معتمد على Meta Ads."""
+        """
+        إطلاق إعلان معتمد على Meta Ads.
+        يُنشئ حملة CBO واحدة + adset لكل دولة من الـ 10 دول.
+        """
         ad = next((a for a in self.pending_ads if a["id"] == ad_id), None)
         if not ad:
             return {"success": False, "error": "Ad not found"}
 
         if not META_ACCESS_TOKEN or not META_AD_ACCOUNT_ID:
-            # حفظ كـ "approved" بدون إطلاق — سيُطلق عند إضافة الـ tokens
             ad["status"] = "approved_no_token"
             self.active_ads.append(ad)
             self.pending_ads.remove(ad)
             self._save_ads()
-            logger.info(f"Ad {ad_id} approved — waiting for META_ACCESS_TOKEN in Railway")
+            logger.warning(f"Ad {ad_id} approved but META_ACCESS_TOKEN missing in Railway")
             return {"success": True, "status": "approved_pending_token",
-                    "message": "Aprobado. Añade META_ACCESS_TOKEN en Railway para lanzar."}
+                    "message": "Aprobado. Falta META_ACCESS_TOKEN en Railway Variables."}
 
         try:
-            campaign_id = await self._meta_create_campaign(ad)
+            countries = ad.get("target_countries", AD_TARGET_COUNTRIES)
+            campaign_id = await self._meta_create_campaign_cbo(ad, countries)
             if not campaign_id:
-                return {"success": False, "error": "Failed to create Meta campaign"}
-
-            adset_id = await self._meta_create_adset(ad, campaign_id)
-            if not adset_id:
-                # Delete the orphan campaign before returning
-                try:
-                    async with httpx.AsyncClient(timeout=10.0) as cl:
-                        await cl.delete(f"{META_BASE}/{campaign_id}", params={"access_token": META_ACCESS_TOKEN})
-                except Exception:
-                    pass
-                return {"success": False, "error": "Failed to create Meta ad set — check Railway logs for Meta error details"}
+                return {"success": False, "error": "Failed to create Meta campaign — check Railway logs"}
 
             ad_creative_id = await self._meta_create_creative(ad)
             if not ad_creative_id:
-                return {"success": False, "error": "Failed to create Meta ad creative"}
+                # Cleanup
+                async with httpx.AsyncClient(timeout=10.0) as cl:
+                    await cl.delete(f"{META_BASE}/{campaign_id}", params={"access_token": META_ACCESS_TOKEN})
+                return {"success": False, "error": "Failed to create Meta ad creative — check Railway logs"}
 
-            final_ad_id = await self._meta_create_ad(adset_id, ad_creative_id, ad["headline"])
+            # Create one adset + one ad per country
+            adsets_created = []
+            for country in countries:
+                adset_id = await self._meta_create_adset_country(ad, campaign_id, country)
+                if adset_id:
+                    ad_obj_id = await self._meta_create_ad(adset_id, ad_creative_id,
+                                                           f"{ad['headline'][:35]} — {country}")
+                    adsets_created.append({
+                        "country": country,
+                        "adset_id": adset_id,
+                        "ad_id": ad_obj_id
+                    })
+                    await asyncio.sleep(0.5)  # Rate limit
 
-            ad["status"]       = "active"
+            if not adsets_created:
+                async with httpx.AsyncClient(timeout=10.0) as cl:
+                    await cl.delete(f"{META_BASE}/{campaign_id}", params={"access_token": META_ACCESS_TOKEN})
+                return {"success": False, "error": "No adsets created — check Meta permissions"}
+
+            ad["status"]           = "active"
             ad["meta_campaign_id"] = campaign_id
-            ad["meta_adset_id"]    = adset_id
-            ad["meta_ad_id"]       = final_ad_id
-            ad["launched_at"]  = datetime.now().isoformat()
+            ad["meta_creative_id"] = ad_creative_id
+            ad["meta_adsets"]      = adsets_created  # one per country
+            ad["countries_active"] = [a["country"] for a in adsets_created]
+            ad["launched_at"]      = datetime.now().isoformat()
             self.active_ads.append(ad)
             self.pending_ads.remove(ad)
             self._save_ads()
 
-            logger.info(f"✅ Ad {ad_id} launched on Meta — campaign: {campaign_id}")
+            countries_str = ", ".join(ad["countries_active"])
+            logger.info(f"✅ Ad {ad_id} launched — campaign {campaign_id} | {len(adsets_created)} countries: {countries_str}")
+
             await self._send_email(
-                f"🚀 Anuncio lanzado: {ad['product_name']}",
-                f"<p>El anuncio <b>{ad['product_name']}</b> está activo en Facebook/Instagram.</p>"
-                f"<p>País: {ad['target_country']} | Presupuesto: €{ad['daily_budget']}/día</p>"
-                f"<p>Seguimiento en <a href='https://www.facebook.com/adsmanager'>Meta Ads Manager</a></p>"
+                f"🚀 Anuncio lanzado en {len(adsets_created)} países: {ad['product_name']}",
+                f"""<div style='font-family:Arial;max-width:600px;margin:auto;padding:20px'>
+                <h2 style='color:#27ae60'>🚀 Anuncio activo en {len(adsets_created)} países</h2>
+                <p><b>{ad['product_name']}</b> ya se está publicando en Facebook e Instagram.</p>
+                <p><b>Países:</b> {countries_str}</p>
+                <p><b>Presupuesto total:</b> €{ad['daily_budget'] * len(adsets_created):.0f}/día (€{ad['daily_budget']}/país)</p>
+                <p><b>Campaña Meta ID:</b> {campaign_id}</p>
+                <p><a href='https://www.facebook.com/adsmanager' style='background:#1877f2;color:white;padding:10px 20px;border-radius:6px;text-decoration:none'>
+                Ver en Meta Ads Manager</a></p>
+                <p><small>— PataBot 🐾</small></p>
+                </div>"""
             )
-            return {"success": True, "campaign_id": campaign_id, "status": "active"}
+            return {
+                "success": True,
+                "campaign_id": campaign_id,
+                "adsets_created": len(adsets_created),
+                "countries": ad["countries_active"],
+                "daily_budget_total": ad["daily_budget"] * len(adsets_created)
+            }
 
         except Exception as e:
             logger.error(f"Meta ads launch error: {e}")
@@ -390,55 +443,59 @@ class MarketingManager:
         logger.info(f"Ad {ad_id} rejected by Mohamed")
         return {"success": True, "status": "rejected"}
 
-    async def _meta_create_campaign(self, ad: Dict) -> Optional[str]:
-        """إنشاء حملة على Meta."""
+    async def _meta_create_campaign_cbo(self, ad: Dict, countries: List[str]) -> Optional[str]:
+        """
+        إنشاء حملة CBO (Campaign Budget Optimization) على Meta.
+        الميزانية على مستوى الحملة — Meta يوزعها بذكاء على الدول.
+        """
+        total_budget_cents = int(ad["daily_budget"] * 100 * len(countries))
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 f"{META_BASE}/{META_AD_ACCOUNT_ID}/campaigns",
                 params={"access_token": META_ACCESS_TOKEN},
                 json={
-                    "name":      f"PataHogar — {ad['product_name'][:40]} ({ad['target_country']})",
-                    "objective": "OUTCOME_SALES",
-                    "status":    "ACTIVE",
+                    "name":         f"PataHogar — {ad['product_name'][:40]} — {len(countries)} países",
+                    "objective":    "OUTCOME_SALES",
+                    "status":       "ACTIVE",
+                    "daily_budget": total_budget_cents,
+                    "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
                     "special_ad_categories": [],
-                    "is_adset_budget_sharing_enabled": False,
-                    "buying_type": "AUCTION"
+                    "buying_type":  "AUCTION",
+                    "is_adset_budget_sharing_enabled": True,  # CBO — Meta distributes budget
                 }
             )
             if r.status_code == 200:
-                return r.json().get("id")
-            logger.error(f"Meta campaign error: {r.text[:300]}")
+                cid = r.json().get("id")
+                logger.info(f"CBO Campaign created: {cid} | budget: €{ad['daily_budget'] * len(countries):.0f}/day")
+                return cid
+            logger.error(f"Meta campaign error {r.status_code}: {r.text[:400]}")
             return None
 
-    async def _meta_create_adset(self, ad: Dict, campaign_id: str) -> Optional[str]:
-        """إنشاء مجموعة إعلانية على Meta."""
-        daily_budget_cents = int(ad["daily_budget"] * 100)
-        country = ad["target_country"]
+    async def _meta_create_adset_country(self, ad: Dict, campaign_id: str, country: str) -> Optional[str]:
+        """إنشاء adset لدولة واحدة — الميزانية من الحملة (CBO)."""
+        needs_dsa = country in DSA_REQUIRED_COUNTRIES
 
-        targeting = {
-            "geo_locations": {"countries": [country]},
-            "age_min": 22,
-            "targeting_automation": {"advantage_audience": 1},
-        }
-
-        # OUTCOME_SALES + Pixel — full conversion tracking (DSA required for EU)
         payload = {
-            "name":              f"AdSet — {country} — {ad['product_name'][:30]}",
+            "name":              f"AdSet — {country}",
             "campaign_id":       campaign_id,
-            "daily_budget":      daily_budget_cents,
             "billing_event":     "IMPRESSIONS",
             "optimization_goal": "OFFSITE_CONVERSIONS",
             "bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
             "destination_type":  "WEBSITE",
-            "targeting":         targeting,
+            "targeting": {
+                "geo_locations": {"countries": [country]},
+                "age_min":       22,
+                "targeting_automation": {"advantage_audience": 1},
+            },
             "status":            "ACTIVE",
             "promoted_object": {
                 "pixel_id":          META_PIXEL_ID,
                 "custom_event_type": "PURCHASE"
             },
-            "dsa_beneficiary":   "PataHogar",
-            "dsa_payor":         "PataHogar",
         }
+        if needs_dsa:
+            payload["dsa_beneficiary"] = "PataHogar"
+            payload["dsa_payor"]       = "PataHogar"
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
@@ -447,37 +504,61 @@ class MarketingManager:
                 json=payload
             )
             if r.status_code == 200:
-                return r.json().get("id")
-            logger.error(f"Meta adset error {r.status_code}: {r.text[:500]}")
+                asid = r.json().get("id")
+                logger.info(f"AdSet created for {country}: {asid}")
+                return asid
+            logger.error(f"AdSet error [{country}] {r.status_code}: {r.text[:300]}")
             return None
 
+    # Keep old single-country method for backward compatibility
+    async def _meta_create_campaign(self, ad: Dict) -> Optional[str]:
+        return await self._meta_create_campaign_cbo(ad, [ad.get("target_country", "ES")])
+
+    async def _meta_create_adset(self, ad: Dict, campaign_id: str) -> Optional[str]:
+        return await self._meta_create_adset_country(ad, campaign_id, ad.get("target_country", "ES"))
+
     async def _meta_create_creative(self, ad: Dict) -> Optional[str]:
-        """إنشاء creative للإعلان (صورة + نص)."""
+        """إنشاء creative للإعلان — يُحيل لصفحة المنتج المخصصة."""
         if not META_PAGE_ID:
             logger.warning("META_PAGE_ID not set — skipping creative creation")
             return None
+
+        product_id  = ad.get("product_id", "")
+        product_url = (
+            f"https://patahogar.com/product.html?id={product_id}"
+            if product_id
+            else "https://patahogar.com/catalog.html"
+        )
+
+        creative_body = {
+            "name": f"Creative — {ad['product_name'][:40]}",
+            "object_story_spec": {
+                "page_id": META_PAGE_ID,
+                "link_data": {
+                    "link":    product_url,
+                    "message": ad["body"],
+                    "name":    ad["headline"],
+                    "call_to_action": {
+                        "type":  ad["cta"],
+                        "value": {"link": product_url}
+                    },
+                }
+            }
+        }
+        if ad.get("product_image"):
+            creative_body["object_story_spec"]["link_data"]["picture"] = ad["product_image"]
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 f"{META_BASE}/{META_AD_ACCOUNT_ID}/adcreatives",
                 params={"access_token": META_ACCESS_TOKEN},
-                json={
-                    "name": f"Creative — {ad['product_name'][:40]}",
-                    "object_story_spec": {
-                        "page_id": META_PAGE_ID,
-                        "link_data": {
-                            "link":        "https://patahogar.com",
-                            "message":     ad["body"],
-                            "name":        ad["headline"],
-                            "call_to_action": {"type": ad["cta"], "value": {"link": "https://patahogar.com"}},
-                            "picture":     ad["product_image"] if ad.get("product_image") else None,
-                        }
-                    }
-                }
+                json=creative_body
             )
             if r.status_code == 200:
-                return r.json().get("id")
-            logger.error(f"Meta creative error: {r.text[:300]}")
+                crid = r.json().get("id")
+                logger.info(f"Creative created: {crid} → {product_url}")
+                return crid
+            logger.error(f"Meta creative error {r.status_code}: {r.text[:300]}")
             return None
 
     async def _meta_create_ad(self, adset_id: str, creative_id: str, name: str) -> Optional[str]:

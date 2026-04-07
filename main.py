@@ -7,6 +7,7 @@ PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.6.0
 """
 
 import os
+import json
 import asyncio
 import logging
 from datetime import datetime
@@ -538,6 +539,210 @@ async def approve_ad_post(request: Request):
     if action == "approve":
         return await marketing_manager.launch_approved_ad(ad_id)
     return await marketing_manager.reject_ad(ad_id)
+
+@app.get("/product/{product_id}", response_class=HTMLResponse)
+async def product_page(product_id: int):
+    """صفحة المنتج المخصصة — تُستخدم كـ landing page للإعلانات."""
+    product = await product_manager.get_product_by_id(product_id)
+    if not product:
+        return HTMLResponse(content="""
+            <html><body style="font-family:Arial;text-align:center;padding:60px;color:#666">
+            <h2>🔍 Producto no encontrado</h2>
+            <p><a href="https://patahogar.com/catalog.html" style="color:#1a5e35">← Ver catálogo</a></p>
+            </body></html>""", status_code=404)
+
+    name        = product.get("name", "Producto")
+    price       = product.get("selling_price", 0)
+    old_price   = product.get("old_price", price * 1.3)
+    profit      = product.get("profit", 0)
+    image_url   = product.get("image_url", "")
+    images      = product.get("images", [image_url]) if image_url else []
+    descriptions = product.get("descriptions", {})
+    desc_es     = descriptions.get("es", descriptions.get("en", ""))
+    category    = product.get("category", "")
+    discount_pct = int(((old_price - price) / old_price) * 100) if old_price > price else 0
+
+    # Build image gallery
+    img_tags = ""
+    for i, img in enumerate(images[:5]):
+        display = "block" if i == 0 else "none"
+        img_tags += f'<img id="img-{i}" src="{img}" style="width:100%;max-height:420px;object-fit:contain;display:{display};border-radius:8px">'
+    thumb_tags = ""
+    for i, img in enumerate(images[:5]):
+        thumb_tags += f'<img src="{img}" onclick="showImg({i})" style="width:60px;height:60px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid {"#1a5e35" if i==0 else "#eee"};margin:4px" id="thumb-{i}">'
+
+    if not img_tags:
+        img_tags = f'<div style="width:100%;height:300px;background:#f5f5f5;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:80px">🐾</div>'
+
+    checkout_url = f"https://patabot-production.up.railway.app/api/checkout/create-session"
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{name} | PataHogar</title>
+  <meta property="og:title" content="{name} | PataHogar">
+  <meta property="og:image" content="{image_url}">
+  <meta property="og:description" content="🚀 Envío rápido a toda Europa | Devolución 30 días">
+  <meta property="og:url" content="https://patahogar.com/product.html?id={product_id}">
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333}}
+    .nav{{background:#1a5e35;padding:12px 20px;display:flex;align-items:center;justify-content:space-between}}
+    .nav a{{color:white;text-decoration:none;font-size:1.1rem;font-weight:bold}}
+    .nav span{{color:#ff6b35;font-size:0.85rem}}
+    .container{{max-width:900px;margin:0 auto;padding:20px}}
+    .breadcrumb{{color:#888;font-size:0.85rem;margin-bottom:16px}}
+    .breadcrumb a{{color:#1a5e35;text-decoration:none}}
+    .product-grid{{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-bottom:32px}}
+    @media(max-width:600px){{.product-grid{{grid-template-columns:1fr}}}}
+    .gallery{{position:relative}}
+    .badge{{position:absolute;top:12px;right:12px;background:#ff6b35;color:white;padding:6px 12px;border-radius:20px;font-weight:bold;font-size:0.85rem}}
+    .thumbs{{display:flex;flex-wrap:wrap;margin-top:8px}}
+    .info h1{{font-size:1.5rem;line-height:1.3;margin-bottom:12px;color:#1a1a1a}}
+    .category{{background:#e8f5e9;color:#1a5e35;padding:4px 10px;border-radius:12px;font-size:0.8rem;display:inline-block;margin-bottom:12px}}
+    .price-block{{margin:16px 0}}
+    .price{{font-size:2rem;font-weight:bold;color:#1a5e35}}
+    .old-price{{font-size:1.1rem;color:#aaa;text-decoration:line-through;margin-left:8px}}
+    .profit-badge{{background:#fff3cd;color:#856404;padding:4px 10px;border-radius:12px;font-size:0.8rem;display:inline-block;margin-top:6px}}
+    .btn-buy{{width:100%;padding:16px;background:#ff6b35;color:white;border:none;border-radius:10px;font-size:1.1rem;font-weight:bold;cursor:pointer;margin:16px 0;transition:background 0.2s}}
+    .btn-buy:hover{{background:#e55a25}}
+    .btn-buy:disabled{{background:#ccc;cursor:not-allowed}}
+    .trust{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}}
+    .trust-item{{text-align:center;padding:10px;background:#f8f9fa;border-radius:8px;font-size:0.8rem}}
+    .trust-item .icon{{font-size:1.4rem}}
+    .desc{{background:white;padding:20px;border-radius:10px;margin-top:24px}}
+    .desc h3{{color:#1a5e35;margin-bottom:10px}}
+    .footer-strip{{background:#1a5e35;color:rgba(255,255,255,0.8);text-align:center;padding:16px;margin-top:32px;font-size:0.85rem}}
+    .loading{{display:none;text-align:center;padding:12px;color:#1a5e35}}
+    .qty-row{{display:flex;align-items:center;gap:12px;margin:12px 0}}
+    .qty-btn{{width:36px;height:36px;border:2px solid #1a5e35;background:white;color:#1a5e35;border-radius:8px;font-size:1.2rem;cursor:pointer}}
+    .qty-input{{width:60px;text-align:center;border:2px solid #ddd;border-radius:8px;padding:6px;font-size:1rem}}
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <a href="https://patahogar.com">🐾 PataHogar</a>
+  <span>🚚 Envío gratis +30€</span>
+</nav>
+
+<div class="container">
+  <div class="breadcrumb">
+    <a href="https://patahogar.com">Inicio</a> ›
+    <a href="https://patahogar.com/catalog.html">{category or "Catálogo"}</a> ›
+    {name[:40]}
+  </div>
+
+  <div class="product-grid">
+    <div class="gallery">
+      {img_tags}
+      {f'<span class="badge">-{discount_pct}%</span>' if discount_pct > 5 else ""}
+      <div class="thumbs">{thumb_tags}</div>
+    </div>
+
+    <div class="info">
+      {f'<span class="category">{category}</span>' if category else ""}
+      <h1>{name}</h1>
+
+      <div class="price-block">
+        <span class="price">€{price:.2f}</span>
+        {f'<span class="old-price">€{old_price:.2f}</span>' if discount_pct > 5 else ""}
+        <br>
+        <span class="profit-badge">✅ Envío en 3-7 días</span>
+      </div>
+
+      <div class="qty-row">
+        <button class="qty-btn" onclick="changeQty(-1)">−</button>
+        <input class="qty-input" id="qty" type="number" value="1" min="1" max="10" readonly>
+        <button class="qty-btn" onclick="changeQty(1)">+</button>
+        <span style="color:#888;font-size:0.85rem">unidades</span>
+      </div>
+
+      <button class="btn-buy" id="buyBtn" onclick="checkout()">
+        🛒 Comprar ahora — €{price:.2f}
+      </button>
+      <div class="loading" id="loading">⏳ Preparando pago seguro...</div>
+
+      <div class="trust">
+        <div class="trust-item"><div class="icon">🔒</div>Pago seguro</div>
+        <div class="trust-item"><div class="icon">🚚</div>Envío 3-7 días</div>
+        <div class="trust-item"><div class="icon">↩️</div>30 días devolución</div>
+      </div>
+    </div>
+  </div>
+
+  {f'<div class="desc"><h3>📋 Descripción del producto</h3><p style="line-height:1.7;color:#555">{desc_es}</p></div>' if desc_es else ""}
+
+</div>
+
+<div class="footer-strip">
+  PataHogar — Mascotas &amp; Hogar con Amor 🐾 | patahogar.com
+</div>
+
+<script>
+  var productId = {product_id};
+  var price = {price};
+  var name = {json.dumps(name)};
+
+  function showImg(i) {{
+    document.querySelectorAll('[id^="img-"]').forEach(function(el){{ el.style.display='none'; }});
+    document.querySelectorAll('[id^="thumb-"]').forEach(function(el){{ el.style.border='2px solid #eee'; }});
+    var imgEl = document.getElementById('img-' + i);
+    var thumbEl = document.getElementById('thumb-' + i);
+    if(imgEl) imgEl.style.display='block';
+    if(thumbEl) thumbEl.style.border='2px solid #1a5e35';
+  }}
+
+  function changeQty(delta) {{
+    var inp = document.getElementById('qty');
+    var val = parseInt(inp.value) + delta;
+    if(val >= 1 && val <= 10) inp.value = val;
+    document.getElementById('buyBtn').textContent = '🛒 Comprar ahora — €' + (price * val).toFixed(2);
+  }}
+
+  async function checkout() {{
+    var qty = parseInt(document.getElementById('qty').value);
+    var btn = document.getElementById('buyBtn');
+    var loading = document.getElementById('loading');
+    btn.disabled = true;
+    loading.style.display = 'block';
+    try {{
+      var resp = await fetch('{checkout_url}', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{product_id: productId, qty: qty}})
+      }});
+      var data = await resp.json();
+      if(data.checkout_url) {{
+        window.location.href = data.checkout_url;
+      }} else {{
+        alert('Error al preparar el pago. Intenta de nuevo.');
+        btn.disabled = false;
+        loading.style.display = 'none';
+      }}
+    }} catch(e) {{
+      alert('Error de conexión. Intenta de nuevo.');
+      btn.disabled = false;
+      loading.style.display = 'none';
+    }}
+  }}
+</script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/api/marketing/ad-details/{ad_id}")
+async def ad_details(ad_id: str):
+    """تفاصيل كاملة عن إعلان — للتشخيص."""
+    ad = next((a for a in marketing_manager.active_ads if a["id"] == ad_id), None)
+    if not ad:
+        ad = next((a for a in marketing_manager.pending_ads if a["id"] == ad_id), None)
+    if not ad:
+        return JSONResponse(status_code=404, content={"error": "Ad not found"})
+    return ad
+
 
 @app.get("/api/marketing/update-budget")
 async def update_ad_budget(ad_id: str = Query(""), budget: float = Query(10.0)):
