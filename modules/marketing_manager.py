@@ -364,35 +364,37 @@ class MarketingManager:
 
         try:
             countries = ad.get("target_countries", AD_TARGET_COUNTRIES)
+            logger.info(f"Launching ad {ad_id}: {ad['product_name']} → {countries}")
+
+            # Step 1: Create campaign
             campaign_id = await self._meta_create_campaign_cbo(ad, countries)
             if not campaign_id:
-                return {"success": False, "error": "Failed to create Meta campaign — check Railway logs"}
+                return {"success": False, "error": "❌ Step 1 fallo: No se pudo crear la campaña Meta. Revisa los logs de Railway."}
 
+            # Step 2: Create creative
             ad_creative_id = await self._meta_create_creative(ad)
             if not ad_creative_id:
-                # Cleanup
                 async with httpx.AsyncClient(timeout=10.0) as cl:
                     await cl.delete(f"{META_BASE}/{campaign_id}", params={"access_token": META_ACCESS_TOKEN})
-                return {"success": False, "error": "Failed to create Meta ad creative — check Railway logs"}
+                return {"success": False, "error": f"❌ Step 2 fallo: No se pudo crear el creative (comprueba META_PAGE_ID={META_PAGE_ID or 'NO CONFIGURADO'})."}
 
-            # Create one adset + one ad per country
+            # Step 3: Create one adset + one ad per country
             adsets_created = []
+            adsets_failed = []
             for country in countries:
                 adset_id = await self._meta_create_adset_country(ad, campaign_id, country)
                 if adset_id:
                     ad_obj_id = await self._meta_create_ad(adset_id, ad_creative_id,
                                                            f"{ad['headline'][:35]} — {country}")
-                    adsets_created.append({
-                        "country": country,
-                        "adset_id": adset_id,
-                        "ad_id": ad_obj_id
-                    })
-                    await asyncio.sleep(0.5)  # Rate limit
+                    adsets_created.append({"country": country, "adset_id": adset_id, "ad_id": ad_obj_id})
+                else:
+                    adsets_failed.append(country)
+                await asyncio.sleep(0.5)  # Rate limit
 
             if not adsets_created:
                 async with httpx.AsyncClient(timeout=10.0) as cl:
                     await cl.delete(f"{META_BASE}/{campaign_id}", params={"access_token": META_ACCESS_TOKEN})
-                return {"success": False, "error": "No adsets created — check Meta permissions"}
+                return {"success": False, "error": f"❌ Step 3 fallo: No se creó ningún adset. Países con error: {adsets_failed}. Revisa los logs de Railway."}
 
             ad["status"]           = "active"
             ad["meta_campaign_id"] = campaign_id
@@ -445,39 +447,41 @@ class MarketingManager:
 
     async def _meta_create_campaign_cbo(self, ad: Dict, countries: List[str]) -> Optional[str]:
         """
-        إنشاء حملة CBO (Campaign Budget Optimization) على Meta.
-        الميزانية على مستوى الحملة — Meta يوزعها بذكاء على الدول.
+        إنشاء حملة بسيطة على Meta (بدون CBO — الميزانية على مستوى كل adset).
+        هذا النهج مثبت: هو نفس ما يعمل في test-meta-adset.
         """
-        total_budget_cents = int(ad["daily_budget"] * 100 * len(countries))
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.post(
                 f"{META_BASE}/{META_AD_ACCOUNT_ID}/campaigns",
                 params={"access_token": META_ACCESS_TOKEN},
                 json={
-                    "name":         f"PataHogar — {ad['product_name'][:40]} — {len(countries)} países",
-                    "objective":    "OUTCOME_SALES",
-                    "status":       "ACTIVE",
-                    "daily_budget": total_budget_cents,
-                    "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                    "name":          f"PataHogar — {ad['product_name'][:40]} — {len(countries)} países",
+                    "objective":     "OUTCOME_SALES",
+                    "status":        "ACTIVE",
                     "special_ad_categories": [],
-                    "buying_type":  "AUCTION",
-                    "is_adset_budget_sharing_enabled": True,  # CBO — Meta distributes budget
+                    "buying_type":   "AUCTION",
+                    "is_adset_budget_sharing_enabled": False,
                 }
             )
             if r.status_code == 200:
                 cid = r.json().get("id")
-                logger.info(f"CBO Campaign created: {cid} | budget: €{ad['daily_budget'] * len(countries):.0f}/day")
+                logger.info(f"Campaign created: {cid}")
                 return cid
             logger.error(f"Meta campaign error {r.status_code}: {r.text[:400]}")
             return None
 
     async def _meta_create_adset_country(self, ad: Dict, campaign_id: str, country: str) -> Optional[str]:
-        """إنشاء adset لدولة واحدة — الميزانية من الحملة (CBO)."""
+        """
+        إنشاء adset لدولة واحدة مع ميزانيتها الخاصة.
+        يستخدم نفس تكوين test-meta-adset الذي أُثبت عمله.
+        """
         needs_dsa = country in DSA_REQUIRED_COUNTRIES
+        daily_budget_cents = int(ad["daily_budget"] * 100)
 
         payload = {
-            "name":              f"AdSet — {country}",
+            "name":              f"AdSet — {country} — {ad['product_name'][:25]}",
             "campaign_id":       campaign_id,
+            "daily_budget":      daily_budget_cents,
             "billing_event":     "IMPRESSIONS",
             "optimization_goal": "OFFSITE_CONVERSIONS",
             "bid_strategy":      "LOWEST_COST_WITHOUT_CAP",
@@ -505,12 +509,12 @@ class MarketingManager:
             )
             if r.status_code == 200:
                 asid = r.json().get("id")
-                logger.info(f"AdSet created for {country}: {asid}")
+                logger.info(f"AdSet created [{country}]: {asid} — €{ad['daily_budget']}/day")
                 return asid
-            logger.error(f"AdSet error [{country}] {r.status_code}: {r.text[:300]}")
+            logger.error(f"AdSet error [{country}] {r.status_code}: {r.text[:400]}")
             return None
 
-    # Keep old single-country method for backward compatibility
+    # Backward compatibility aliases
     async def _meta_create_campaign(self, ad: Dict) -> Optional[str]:
         return await self._meta_create_campaign_cbo(ad, [ad.get("target_country", "ES")])
 

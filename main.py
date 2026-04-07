@@ -744,6 +744,99 @@ async def ad_details(ad_id: str):
     return ad
 
 
+@app.get("/api/marketing/launch-test")
+async def launch_test():
+    """
+    اختبار شامل لكل خطوات إطلاق الإعلان — يُظهر أين يفشل بالضبط.
+    يُنشئ ثم يحذف فوراً (لا أثر مالي).
+    """
+    import httpx
+    token    = os.environ.get("META_ACCESS_TOKEN", "")
+    account  = os.environ.get("META_AD_ACCOUNT_ID", "")
+    pixel_id = os.environ.get("META_PIXEL_ID", "")
+    page_id  = os.environ.get("META_PAGE_ID", "")
+    base     = "https://graph.facebook.com/v19.0"
+
+    if not token or not account:
+        return {"error": "META credentials missing"}
+
+    results = {"config": {"account": account, "page_id": page_id or "❌ NOT SET",
+                          "pixel_id": pixel_id or "❌ NOT SET"}}
+    campaign_id = None
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Step 1: Campaign (same as real launch)
+        r = await client.post(f"{base}/{account}/campaigns",
+            params={"access_token": token},
+            json={"name": "PataBot LAUNCH-TEST — delete me",
+                  "objective": "OUTCOME_SALES", "status": "PAUSED",
+                  "special_ad_categories": [], "buying_type": "AUCTION",
+                  "is_adset_budget_sharing_enabled": False})
+        results["step1_campaign"] = {"status": r.status_code, "ok": r.status_code == 200,
+                                     "body": r.json()}
+        if r.status_code != 200:
+            return results
+        campaign_id = r.json()["id"]
+
+        # Step 2: AdSet ES (same as real launch)
+        r = await client.post(f"{base}/{account}/adsets",
+            params={"access_token": token},
+            json={"name": "TEST AdSet ES", "campaign_id": campaign_id,
+                  "daily_budget": 500, "billing_event": "IMPRESSIONS",
+                  "optimization_goal": "OFFSITE_CONVERSIONS",
+                  "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                  "destination_type": "WEBSITE",
+                  "targeting": {"geo_locations": {"countries": ["ES"]}, "age_min": 22,
+                                "targeting_automation": {"advantage_audience": 1}},
+                  "status": "PAUSED",
+                  "promoted_object": {"pixel_id": pixel_id, "custom_event_type": "PURCHASE"},
+                  "dsa_beneficiary": "PataHogar", "dsa_payor": "PataHogar"})
+        results["step2_adset_ES"] = {"status": r.status_code, "ok": r.status_code == 200,
+                                     "body": r.json()}
+
+        # Step 3: AdSet CH (no DSA required)
+        r = await client.post(f"{base}/{account}/adsets",
+            params={"access_token": token},
+            json={"name": "TEST AdSet CH", "campaign_id": campaign_id,
+                  "daily_budget": 500, "billing_event": "IMPRESSIONS",
+                  "optimization_goal": "OFFSITE_CONVERSIONS",
+                  "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+                  "destination_type": "WEBSITE",
+                  "targeting": {"geo_locations": {"countries": ["CH"]}, "age_min": 22,
+                                "targeting_automation": {"advantage_audience": 1}},
+                  "status": "PAUSED",
+                  "promoted_object": {"pixel_id": pixel_id, "custom_event_type": "PURCHASE"}})
+        results["step3_adset_CH"] = {"status": r.status_code, "ok": r.status_code == 200,
+                                     "body": r.json()}
+
+        # Step 4: Creative (needs page_id)
+        if page_id:
+            r = await client.post(f"{base}/{account}/adcreatives",
+                params={"access_token": token},
+                json={"name": "TEST Creative",
+                      "object_story_spec": {
+                          "page_id": page_id,
+                          "link_data": {
+                              "link": "https://patahogar.com/catalog.html",
+                              "message": "Test ad from PataBot",
+                              "name": "PataHogar — Test",
+                              "call_to_action": {"type": "SHOP_NOW",
+                                                 "value": {"link": "https://patahogar.com/catalog.html"}}
+                          }}})
+            results["step4_creative"] = {"status": r.status_code, "ok": r.status_code == 200,
+                                         "body": r.json()}
+        else:
+            results["step4_creative"] = {"ok": False, "error": "META_PAGE_ID not set in Railway"}
+
+        # Cleanup
+        await client.delete(f"{base}/{campaign_id}", params={"access_token": token})
+        results["cleanup"] = f"Campaign {campaign_id} deleted"
+
+    all_ok = all(v.get("ok", False) for k, v in results.items() if k.startswith("step"))
+    results["conclusion"] = "✅ All steps OK — launch should work" if all_ok else "❌ Some steps failed — see above"
+    return results
+
+
 @app.get("/api/marketing/update-budget")
 async def update_ad_budget(ad_id: str = Query(""), budget: float = Query(10.0)):
     """
