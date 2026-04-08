@@ -409,13 +409,25 @@ class MarketingManager:
             countries_str = ", ".join(ad["countries_active"])
             logger.info(f"✅ Ad {ad_id} launched — campaign {campaign_id} | {len(adsets_created)} countries: {countries_str}")
 
+            # TikTok: launch in parallel (non-blocking)
+            tiktok_result = {"success": False, "reason": "not configured"}
+            if TIKTOK_ACCESS_TOKEN and TIKTOK_ADVERTISER_ID:
+                tiktok_result = await self.launch_tiktok_ad(ad)
+                if tiktok_result.get("success"):
+                    ad["tiktok_campaign_id"] = tiktok_result.get("campaign_id")
+                    ad["tiktok_ad_id"]       = tiktok_result.get("ad_id")
+                    self._save_ads()
+
+            tiktok_note = f"<p>🎵 <b>TikTok:</b> {'✅ lanzado — ' + str(tiktok_result.get('campaign_id','')) if tiktok_result.get('success') else '⚠️ ' + str(tiktok_result.get('reason','no configurado'))}</p>"
+
             await self._send_email(
                 f"🚀 Anuncio lanzado en {len(adsets_created)} países: {ad['product_name']}",
                 f"""<div style='font-family:Arial;max-width:600px;margin:auto;padding:20px'>
                 <h2 style='color:#27ae60'>🚀 Anuncio activo en {len(adsets_created)} países</h2>
-                <p><b>{ad['product_name']}</b> ya se está publicando en Facebook e Instagram.</p>
-                <p><b>Países:</b> {countries_str}</p>
-                <p><b>Presupuesto total:</b> €{ad['daily_budget'] * len(adsets_created):.0f}/día (€{ad['daily_budget']}/país)</p>
+                <p><b>{ad['product_name']}</b> ya se está publicando en Facebook, Instagram y TikTok.</p>
+                <p><b>Países Meta:</b> {countries_str}</p>
+                <p><b>Presupuesto Meta:</b> €{ad['daily_budget'] * len(adsets_created):.0f}/día (€{ad['daily_budget']}/país)</p>
+                {tiktok_note}
                 <p><b>Campaña Meta ID:</b> {campaign_id}</p>
                 <p><a href='https://www.facebook.com/adsmanager' style='background:#1877f2;color:white;padding:10px 20px;border-radius:6px;text-decoration:none'>
                 Ver en Meta Ads Manager</a></p>
@@ -427,7 +439,8 @@ class MarketingManager:
                 "campaign_id": campaign_id,
                 "adsets_created": len(adsets_created),
                 "countries": ad["countries_active"],
-                "daily_budget_total": ad["daily_budget"] * len(adsets_created)
+                "daily_budget_total": ad["daily_budget"] * len(adsets_created),
+                "tiktok": tiktok_result
             }
 
         except Exception as e:
@@ -582,6 +595,111 @@ class MarketingManager:
                 return r.json().get("id")
             logger.error(f"Meta ad error: {r.text[:300]}")
             return None
+
+    # ════════════════════════════════════════════════════════
+    # TIKTOK ADS API
+    # ════════════════════════════════════════════════════════
+
+    TIKTOK_BASE = "https://business-api.tiktok.com/open_api/v1.3"
+
+    async def launch_tiktok_ad(self, ad: Dict) -> Dict:
+        """
+        إطلاق إعلان على TikTok Ads بالتوازي مع Meta.
+        يُنشئ: campaign → adgroup → ad
+        """
+        if not TIKTOK_ACCESS_TOKEN or not TIKTOK_ADVERTISER_ID:
+            return {"success": False, "reason": "TikTok not configured — add TIKTOK_ACCESS_TOKEN and TIKTOK_ADVERTISER_ID"}
+
+        headers = {
+            "Access-Token": TIKTOK_ACCESS_TOKEN,
+            "Content-Type": "application/json"
+        }
+        product_name = ad.get("product_name", "Producto")[:40]
+        product_url  = f"https://patahogar.com/product.html?id={ad.get('product_id','')}" if ad.get("product_id") else "https://patahogar.com/catalog.html"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+
+                # Step 1: Campaign
+                r = await client.post(
+                    f"{self.TIKTOK_BASE}/campaign/create/",
+                    headers=headers,
+                    json={
+                        "advertiser_id": TIKTOK_ADVERTISER_ID,
+                        "campaign_name": f"PataHogar — {product_name}",
+                        "objective_type": "PRODUCT_SALES",
+                        "budget_mode": "BUDGET_MODE_INFINITE",
+                        "operation_status": "ENABLE"
+                    }
+                )
+                if r.status_code != 200 or r.json().get("code") != 0:
+                    logger.error(f"TikTok campaign error: {r.text[:300]}")
+                    return {"success": False, "error": f"TikTok campaign: {r.text[:200]}"}
+                campaign_id = r.json()["data"]["campaign_id"]
+
+                # Step 2: Ad Group (one for all EU countries)
+                daily_budget = int(ad.get("daily_budget", 10) * 100)  # in cents
+                r = await client.post(
+                    f"{self.TIKTOK_BASE}/adgroup/create/",
+                    headers=headers,
+                    json={
+                        "advertiser_id":   TIKTOK_ADVERTISER_ID,
+                        "campaign_id":     campaign_id,
+                        "adgroup_name":    f"PataHogar EU — {product_name}",
+                        "placements":      ["PLACEMENT_TIKTOK"],
+                        "location_ids":    ["ES", "FR", "DE", "NL", "IT", "BE"],
+                        "age_groups":      ["AGE_25_34", "AGE_35_44", "AGE_45_54"],
+                        "budget_mode":     "BUDGET_MODE_DAY",
+                        "budget":          daily_budget,
+                        "schedule_type":   "SCHEDULE_FROM_NOW",
+                        "billing_event":   "OCPM",
+                        "optimization_goal": "CONVERT",
+                        "pixel_id":        os.getenv("TIKTOK_PIXEL_ID", ""),
+                        "external_action": "PURCHASE",
+                        "operation_status": "ENABLE"
+                    }
+                )
+                if r.status_code != 200 or r.json().get("code") != 0:
+                    logger.error(f"TikTok adgroup error: {r.text[:300]}")
+                    return {"success": False, "error": f"TikTok adgroup: {r.text[:200]}"}
+                adgroup_id = r.json()["data"]["adgroup_id"]
+
+                # Step 3: Ad creative
+                ad_text = AD_TEMPLATES.get("es", {}).get("body", "").replace("\n", " ")[:100]
+                r = await client.post(
+                    f"{self.TIKTOK_BASE}/ad/create/",
+                    headers=headers,
+                    json={
+                        "advertiser_id": TIKTOK_ADVERTISER_ID,
+                        "adgroup_id":    adgroup_id,
+                        "ad_name":       f"Ad — {product_name}",
+                        "ad_format":     "SINGLE_VIDEO",
+                        "ad_text":       ad_text,
+                        "call_to_action": "SHOP_NOW",
+                        "landing_page_url": product_url,
+                        "operation_status": "ENABLE"
+                    }
+                )
+                if r.status_code != 200 or r.json().get("code") != 0:
+                    logger.error(f"TikTok ad error: {r.text[:300]}")
+                    return {"success": False, "error": f"TikTok ad creation: {r.text[:200]}"}
+
+                tiktok_ad_id = r.json()["data"]["ad_id"]
+                logger.info(f"✅ TikTok ad launched: campaign={campaign_id} adgroup={adgroup_id} ad={tiktok_ad_id}")
+
+                return {
+                    "success":        True,
+                    "platform":       "tiktok",
+                    "campaign_id":    campaign_id,
+                    "adgroup_id":     adgroup_id,
+                    "ad_id":          tiktok_ad_id,
+                    "daily_budget":   ad.get("daily_budget", 10),
+                    "countries":      ["ES", "FR", "DE", "NL", "IT", "BE"]
+                }
+
+        except Exception as e:
+            logger.error(f"TikTok ads error: {e}")
+            return {"success": False, "error": str(e)}
 
     # ════════════════════════════════════════════════════════
     # PERFORMANCE TRACKING

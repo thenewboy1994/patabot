@@ -35,6 +35,8 @@ META_PIXEL_ID = os.getenv("META_PIXEL_ID", "")
 META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
 _CACHE_DIR = Path(os.getenv("CACHE_DIR", "."))
 ORDERS_FILE = _CACHE_DIR / "orders.json"
+PENDING_SESSIONS_FILE = _CACHE_DIR / "pending_sessions.json"
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 
 # BigBuy carrier codes by country
 COUNTRY_CARRIERS = {
@@ -62,7 +64,9 @@ class OrderManager:
 
     def __init__(self):
         self.orders = []
+        self.pending_sessions = {}  # session_id → {cart, created_at, recovery_sent}
         self._load_orders()
+        self._load_pending_sessions()
 
     # ─── Persistence ───
 
@@ -84,6 +88,38 @@ class OrderManager:
             )
         except Exception as e:
             logger.error(f"Order save error: {e}")
+
+    def _load_pending_sessions(self):
+        try:
+            if PENDING_SESSIONS_FILE.exists():
+                self.pending_sessions = json.loads(PENDING_SESSIONS_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.error(f"Pending sessions load error: {e}")
+
+    def _save_pending_sessions(self):
+        try:
+            PENDING_SESSIONS_FILE.write_text(
+                json.dumps(self.pending_sessions, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.error(f"Pending sessions save error: {e}")
+
+    def _track_pending_session(self, session_id: str, cart_items: list):
+        """تسجيل جلسة Stripe للمتابعة — للكشف عن السلال المتروكة."""
+        self.pending_sessions[session_id] = {
+            "cart_items": cart_items,
+            "created_at": datetime.now().isoformat(),
+            "recovery_sent": False,
+            "completed": False,
+        }
+        self._save_pending_sessions()
+
+    def _mark_session_completed(self, session_id: str):
+        """تأكيد أن الجلسة اكتملت — لا نرسل رسالة استرداد."""
+        if session_id in self.pending_sessions:
+            self.pending_sessions[session_id]["completed"] = True
+            self._save_pending_sessions()
 
     # ─── Stripe Checkout Session ───
 
@@ -152,8 +188,11 @@ class OrderManager:
                 )
                 result = r.json()
                 if r.status_code == 200 and result.get("url"):
-                    logger.info(f"Stripe session created: {result['id']} — {len(cart_items)} items")
-                    return {"success": True, "checkout_url": result["url"], "session_id": result["id"]}
+                    session_id = result["id"]
+                    logger.info(f"Stripe session created: {session_id} — {len(cart_items)} items")
+                    # Track for abandoned cart recovery
+                    self._track_pending_session(session_id, cart_items)
+                    return {"success": True, "checkout_url": result["url"], "session_id": session_id}
                 else:
                     err = result.get("error", {}).get("message", "Stripe error")
                     logger.error(f"Stripe session error: {err}")
@@ -204,6 +243,7 @@ class OrderManager:
 
             if event_type == "checkout.session.completed":
                 session = event["data"]["object"]
+                self._mark_session_completed(session.get("id", ""))
                 await self._process_completed_checkout(session)
                 return {"status": "processed"}
 
@@ -628,6 +668,142 @@ class OrderManager:
         </div>
         """
         self._send_email(OWNER_EMAIL, f"⚠️ Error pedido {order['id']} — REVISAR", html)
+
+    # ─── Abandoned Cart Recovery ───
+
+    async def check_abandoned_carts(self) -> dict:
+        """
+        يفحص الجلسات المفتوحة — إذا مضى أكثر من ساعة ولم تكتمل → يرسل إيميل استرداد.
+        يُستدعى من scheduler كل ساعة.
+        """
+        if not STRIPE_SECRET_KEY:
+            return {"skipped": "Stripe not configured"}
+
+        recovered = 0
+        checked = 0
+        now = datetime.now()
+
+        for session_id, data in list(self.pending_sessions.items()):
+            if data.get("completed") or data.get("recovery_sent"):
+                continue
+            try:
+                created = datetime.fromisoformat(data["created_at"])
+                age_minutes = (now - created).total_seconds() / 60
+                if age_minutes < 60:
+                    continue  # Too soon
+                if age_minutes > 72 * 60:
+                    # Too old (3 days) — clean up
+                    del self.pending_sessions[session_id]
+                    continue
+
+                checked += 1
+                # Fetch session from Stripe to get customer email
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.get(
+                        f"https://api.stripe.com/v1/checkout/sessions/{session_id}",
+                        auth=(STRIPE_SECRET_KEY, ""),
+                        params={"expand[]": "customer_details"}
+                    )
+                    if r.status_code != 200:
+                        continue
+                    session = r.json()
+
+                    # Check status
+                    if session.get("payment_status") == "paid":
+                        self.pending_sessions[session_id]["completed"] = True
+                        continue
+
+                    # Get email
+                    email = (session.get("customer_details") or {}).get("email", "")
+                    if not email:
+                        continue
+
+                    # Send recovery email
+                    cart_items = data.get("cart_items", [])
+                    total = sum(float(i.get("selling_price", 0)) * int(i.get("qty", 1)) for i in cart_items)
+                    product_name = cart_items[0].get("name", "tu producto") if cart_items else "tu producto"
+                    await self._send_abandoned_cart_email(email, product_name, total, cart_items)
+                    self.pending_sessions[session_id]["recovery_sent"] = True
+                    recovered += 1
+                    logger.info(f"Abandoned cart recovery sent to {email} — session {session_id}")
+
+            except Exception as e:
+                logger.warning(f"Abandoned cart check error for {session_id}: {e}")
+
+        self._save_pending_sessions()
+        return {"checked": checked, "recovery_emails_sent": recovered}
+
+    async def _send_abandoned_cart_email(self, email: str, product_name: str, total: float, cart_items: list):
+        """إيميل استرداد السلة المتروكة عبر Resend API."""
+        if not RESEND_API_KEY:
+            logger.warning("RESEND_API_KEY not set — abandoned cart email not sent")
+            return
+
+        items_html = ""
+        for item in cart_items[:3]:
+            img = item.get("image_url", "")
+            items_html += f"""
+            <tr>
+              <td style="padding:8px">
+                {'<img src="'+img+'" style="width:60px;height:60px;object-fit:contain;border-radius:6px">' if img else '🐾'}
+              </td>
+              <td style="padding:8px">{str(item.get("name",""))[:50]}</td>
+              <td style="padding:8px;text-align:right;font-weight:bold;color:#1a5e35">
+                €{float(item.get("selling_price",0)):.2f} × {item.get("qty",1)}
+              </td>
+            </tr>"""
+
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px">
+          <div style="background:#1a5e35;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+            <h2 style="color:white;margin:0">🐾 PataHogar</h2>
+          </div>
+          <div style="background:white;padding:24px;border-radius:0 0 12px 12px;border:1px solid #eee">
+            <h3 style="color:#1a1a1a">¡Olvidaste algo en tu carrito! 🛒</h3>
+            <p style="color:#555">Dejaste artículos en tu carrito por un total de
+               <b style="color:#1a5e35">€{total:.2f}</b>. ¡Aún están disponibles!</p>
+
+            <table style="width:100%;border-collapse:collapse;margin:16px 0">
+              {items_html}
+            </table>
+
+            <div style="text-align:center;margin:24px 0">
+              <a href="https://patabot-production.up.railway.app/cart"
+                 style="background:#ff6b35;color:white;padding:14px 32px;border-radius:10px;
+                        text-decoration:none;font-weight:bold;font-size:1.1rem;display:inline-block">
+                🛒 Recuperar mi carrito
+              </a>
+            </div>
+
+            <div style="background:#f0f9f4;padding:12px;border-radius:8px;text-align:center;font-size:0.85rem;color:#555">
+              🚚 Envío gratis en pedidos +€30 &nbsp;|&nbsp; 🔒 Pago 100% seguro &nbsp;|&nbsp; ↩️ 30 días devolución
+            </div>
+
+            <p style="color:#aaa;font-size:0.78rem;text-align:center;margin-top:16px">
+              PataHogar — Mascotas &amp; Hogar con Amor 🐾<br>
+              <a href="https://patahogar.com" style="color:#aaa">patahogar.com</a>
+            </p>
+          </div>
+        </div>"""
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "from": "PataHogar <onboarding@resend.dev>",
+                        "to": [email],
+                        "subject": f"🛒 ¿Olvidaste tu carrito? — {product_name[:40]}",
+                        "html": html
+                    }
+                )
+                if r.status_code in (200, 201):
+                    logger.info(f"✅ Abandoned cart email sent to {email}")
+                else:
+                    logger.error(f"Resend error {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            logger.error(f"Abandoned cart email error: {e}")
 
     # ─── Meta Conversions API ───
 

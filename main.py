@@ -639,9 +639,14 @@ async def product_page(product_id: int):
     .price{{font-size:2rem;font-weight:bold;color:#1a5e35}}
     .old-price{{font-size:1.1rem;color:#aaa;text-decoration:line-through;margin-left:8px}}
     .profit-badge{{background:#fff3cd;color:#856404;padding:4px 10px;border-radius:12px;font-size:0.8rem;display:inline-block;margin-top:6px}}
-    .btn-buy{{width:100%;padding:16px;background:#ff6b35;color:white;border:none;border-radius:10px;font-size:1.1rem;font-weight:bold;cursor:pointer;margin:16px 0;transition:background 0.2s}}
+    .btn-buy{{width:100%;padding:14px;background:#ff6b35;color:white;border:none;border-radius:10px;font-size:1.05rem;font-weight:bold;cursor:pointer;margin:8px 0;transition:background 0.2s}}
     .btn-buy:hover{{background:#e55a25}}
     .btn-buy:disabled{{background:#ccc;cursor:not-allowed}}
+    .btn-cart{{width:100%;padding:14px;background:white;color:#1a5e35;border:2px solid #1a5e35;border-radius:10px;font-size:1.05rem;font-weight:bold;cursor:pointer;margin:8px 0;transition:all 0.2s}}
+    .btn-cart:hover{{background:#1a5e35;color:white}}
+    .btn-cart.added{{background:#1a5e35;color:white}}
+    .cart-nav-link{{color:white;text-decoration:none;font-size:0.9rem;position:relative}}
+    .cart-badge{{background:#ff6b35;color:white;border-radius:50%;width:18px;height:18px;font-size:0.7rem;display:none;align-items:center;justify-content:center;position:absolute;top:-8px;right:-10px;font-weight:bold}}
     .trust{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:16px 0}}
     .trust-item{{text-align:center;padding:10px;background:#f8f9fa;border-radius:8px;font-size:0.8rem}}
     .trust-item .icon{{font-size:1.4rem}}
@@ -666,7 +671,10 @@ async def product_page(product_id: int):
 <body>
 <nav class="nav">
   <a href="https://patahogar.com">🐾 PataHogar</a>
-  <span>🚚 Envío gratis +30€</span>
+  <div style="display:flex;align-items:center;gap:16px">
+    <span style="color:rgba(255,255,255,0.8);font-size:0.85rem">🚚 Gratis +30€</span>
+    <a href="/cart" class="cart-nav-link">🛒 Carrito<span class="cart-badge" id="nav-badge"></span></a>
+  </div>
 </nav>
 
 <div class="container">
@@ -701,8 +709,11 @@ async def product_page(product_id: int):
         <span style="color:#888;font-size:0.85rem">unidades</span>
       </div>
 
+      <button class="btn-cart" id="cartBtn" onclick="addToCart()">
+        🛒 Añadir al carrito
+      </button>
       <button class="btn-buy" id="buyBtn" onclick="checkout()">
-        🛒 Comprar ahora — €{price:.2f}
+        ⚡ Comprar ahora — €{price:.2f}
       </button>
       <div class="loading" id="loading">⏳ Preparando pago seguro...</div>
 
@@ -738,12 +749,57 @@ async def product_page(product_id: int):
     if(thumbEl) thumbEl.style.border='2px solid #1a5e35';
   }}
 
+  var imageUrl = {json.dumps(image_url)};
+  var productSku = {json.dumps(product.get("sku",""))};
+  var wholesalePrice = {product.get("wholesale_price", 0)};
+
+  function getCart() {{
+    try {{ return JSON.parse(localStorage.getItem('patahogar_cart') || '[]'); }}
+    catch(e) {{ return []; }}
+  }}
+  function saveCart(cart) {{ localStorage.setItem('patahogar_cart', JSON.stringify(cart)); updateBadge(); }}
+  function updateBadge() {{
+    var cart = getCart();
+    var total = cart.reduce(function(s,i){{return s+i.qty;}}, 0);
+    var badge = document.getElementById('nav-badge');
+    if(badge) {{ badge.textContent = total > 0 ? total : ''; badge.style.display = total > 0 ? 'inline-flex' : 'none'; }}
+  }}
+
+  function addToCart() {{
+    var qty = parseInt(document.getElementById('qty').value);
+    var cart = getCart();
+    var existing = cart.find(function(i){{ return i.id === productId; }});
+    if(existing) {{
+      existing.qty = Math.min(10, existing.qty + qty);
+    }} else {{
+      cart.push({{ id: productId, sku: productSku, name: name, price: price,
+                   wholesale: wholesalePrice, image: imageUrl, qty: qty }});
+    }}
+    saveCart(cart);
+    var btn = document.getElementById('cartBtn');
+    btn.textContent = '✅ Añadido al carrito';
+    btn.classList.add('added');
+    if(typeof fbq !== 'undefined') {{
+      fbq('track', 'AddToCart', {{
+        content_ids: [String(productId)], content_type: 'product',
+        content_name: name, value: price * qty, currency: 'EUR', num_items: qty
+      }});
+    }}
+    setTimeout(function() {{
+      btn.textContent = '🛒 Añadir al carrito';
+      btn.classList.remove('added');
+    }}, 2000);
+  }}
+
   function changeQty(delta) {{
     var inp = document.getElementById('qty');
     var val = parseInt(inp.value) + delta;
     if(val >= 1 && val <= 10) inp.value = val;
-    document.getElementById('buyBtn').textContent = '🛒 Comprar ahora — €' + (price * val).toFixed(2);
+    document.getElementById('buyBtn').textContent = '⚡ Comprar ahora — €' + (price * val).toFixed(2);
   }}
+
+  // Init badge on load
+  updateBadge();
 
   async function checkout() {{
     var qty = parseInt(document.getElementById('qty').value);
@@ -1049,6 +1105,22 @@ async def set_default_budget(budget: float = Query(10.0)):
     marketing_manager.default_daily_budget = budget
     return {"status": "ok", "new_default_budget": budget, "message": f"الإعلانات الجديدة ستكون بميزانية €{budget}/يوم"}
 
+@app.get("/api/marketing/test-tiktok")
+async def test_tiktok():
+    """اختبار اتصال TikTok Ads API."""
+    token = os.getenv("TIKTOK_ACCESS_TOKEN", "")
+    adv_id = os.getenv("TIKTOK_ADVERTISER_ID", "")
+    if not token or not adv_id:
+        return {"configured": False, "error": "TIKTOK_ACCESS_TOKEN or TIKTOK_ADVERTISER_ID not set in Railway"}
+    import httpx
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(
+            "https://business-api.tiktok.com/open_api/v1.3/advertiser/info/",
+            headers={"Access-Token": token},
+            params={"advertiser_ids": f'["{adv_id}"]', "fields": '["name","status","currency"]'}
+        )
+    return {"configured": True, "status": r.status_code, "response": r.json()}
+
 @app.post("/api/marketing/propose-ad")
 async def propose_ad(request: Request):
     data = await request.json()
@@ -1175,6 +1247,238 @@ async def success_page(session_id: str = Query("", alias="session_id")):
 
   <p class="footer">PataHogar — Mascotas &amp; Hogar con Amor 🐾 | <a href="/privacy" style="color:#888">Privacidad</a> | <a href="/terms" style="color:#888">Términos</a></p>
 </div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+# ════════════════════════════════════════════════════════
+# SHOPPING CART PAGE
+# ════════════════════════════════════════════════════════
+
+@app.get("/cart", response_class=HTMLResponse)
+async def cart_page():
+    """صفحة السلة — تقرأ من localStorage وتعرض المنتجات."""
+    pixel_id = os.getenv("META_PIXEL_ID", "")
+    pixel_init = ""
+    if pixel_id:
+        pixel_init = f"""
+  <script>
+    !function(f,b,e,v,n,t,s){{if(f.fbq)return;n=f.fbq=function(){{n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)}};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}}(window,
+    document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '{pixel_id}');
+    fbq('track', 'PageView');
+  </script>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tu Carrito | PataHogar</title>
+  {pixel_init}
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333}}
+    .nav{{background:#1a5e35;padding:12px 20px;display:flex;align-items:center;justify-content:space-between}}
+    .nav a{{color:white;text-decoration:none;font-size:1.1rem;font-weight:bold}}
+    .nav-right{{display:flex;align-items:center;gap:16px}}
+    .container{{max-width:900px;margin:0 auto;padding:20px}}
+    h1{{font-size:1.5rem;color:#1a1a1a;margin:20px 0 16px}}
+    .cart-layout{{display:grid;grid-template-columns:1fr 320px;gap:24px}}
+    @media(max-width:680px){{.cart-layout{{grid-template-columns:1fr}}}}
+    .cart-items{{background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.06)}}
+    .cart-item{{display:grid;grid-template-columns:80px 1fr auto;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid #f0f0f0}}
+    .cart-item:last-child{{border-bottom:none}}
+    .cart-item img{{width:80px;height:80px;object-fit:contain;border-radius:8px;background:#f8f9fa}}
+    .item-name{{font-weight:600;font-size:0.95rem;margin-bottom:4px;color:#1a1a1a}}
+    .item-price{{color:#1a5e35;font-weight:bold;font-size:1rem}}
+    .qty-ctrl{{display:flex;align-items:center;gap:8px;margin-top:8px}}
+    .qty-btn{{width:28px;height:28px;border:1.5px solid #ddd;background:white;border-radius:6px;cursor:pointer;font-size:1rem;display:flex;align-items:center;justify-content:center}}
+    .qty-btn:hover{{border-color:#1a5e35;color:#1a5e35}}
+    .qty-val{{width:36px;text-align:center;font-weight:bold}}
+    .remove-btn{{background:none;border:none;color:#ccc;cursor:pointer;font-size:1.2rem;padding:4px}}
+    .remove-btn:hover{{color:#e74c3c}}
+    .summary{{background:white;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.06);position:sticky;top:20px;height:fit-content}}
+    .summary h3{{font-size:1.1rem;color:#1a1a1a;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #f0f0f0}}
+    .summary-row{{display:flex;justify-content:space-between;margin-bottom:10px;font-size:0.95rem}}
+    .summary-total{{display:flex;justify-content:space-between;font-size:1.2rem;font-weight:bold;color:#1a5e35;padding-top:12px;border-top:2px solid #1a5e35;margin-top:8px}}
+    .btn-checkout{{width:100%;padding:16px;background:#ff6b35;color:white;border:none;border-radius:10px;font-size:1.1rem;font-weight:bold;cursor:pointer;margin-top:16px;transition:background 0.2s}}
+    .btn-checkout:hover{{background:#e55a25}}
+    .btn-checkout:disabled{{background:#ccc;cursor:not-allowed}}
+    .btn-continue{{display:block;text-align:center;color:#1a5e35;text-decoration:none;margin-top:12px;font-size:0.9rem}}
+    .empty-cart{{text-align:center;padding:60px 20px;color:#888}}
+    .empty-cart .icon{{font-size:4rem;margin-bottom:16px}}
+    .loading{{display:none;text-align:center;padding:10px;color:#1a5e35}}
+    .free-ship{{background:#e8f5e9;color:#1a5e35;padding:8px 12px;border-radius:8px;font-size:0.82rem;text-align:center;margin-top:12px}}
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <a href="https://patahogar.com">🐾 PataHogar</a>
+  <div class="nav-right">
+    <a href="https://patahogar.com/catalog.html" style="color:rgba(255,255,255,0.8);font-size:0.9rem">← Seguir comprando</a>
+  </div>
+</nav>
+
+<div class="container">
+  <h1>🛒 Tu Carrito</h1>
+
+  <div id="empty-cart" class="empty-cart" style="display:none">
+    <div class="icon">🛒</div>
+    <h2>Tu carrito está vacío</h2>
+    <p style="margin:8px 0 20px">Descubre nuestros productos y añade algo especial</p>
+    <a href="https://patahogar.com/catalog.html" style="background:#1a5e35;color:white;padding:12px 28px;border-radius:10px;text-decoration:none;font-weight:bold">Ver catálogo</a>
+  </div>
+
+  <div id="cart-content" class="cart-layout">
+    <div class="cart-items" id="cart-items-list">
+      <!-- Items rendered by JS -->
+    </div>
+
+    <div class="summary">
+      <h3>📋 Resumen del pedido</h3>
+      <div class="summary-row"><span>Subtotal</span><span id="subtotal">€0.00</span></div>
+      <div class="summary-row"><span>Envío</span><span style="color:#27ae60">Calculado en checkout</span></div>
+      <div class="summary-total"><span>Total</span><span id="total">€0.00</span></div>
+      <div class="free-ship">🚚 ¡Envío gratis en pedidos +€30!</div>
+      <button class="btn-checkout" id="checkout-btn" onclick="checkout()">
+        🔒 Pagar ahora
+      </button>
+      <div class="loading" id="loading">⏳ Preparando pago seguro...</div>
+      <a href="https://patahogar.com/catalog.html" class="btn-continue">← Seguir comprando</a>
+    </div>
+  </div>
+</div>
+
+<script>
+  var CHECKOUT_URL = 'https://patabot-production.up.railway.app/api/checkout/create-session';
+  var PIXEL_ID = '{pixel_id}';
+
+  function getCart() {{
+    try {{ return JSON.parse(localStorage.getItem('patahogar_cart') || '[]'); }}
+    catch(e) {{ return []; }}
+  }}
+  function saveCart(cart) {{
+    localStorage.setItem('patahogar_cart', JSON.stringify(cart));
+    updateCartBadge();
+  }}
+  function updateCartBadge() {{
+    var cart = getCart();
+    var total = cart.reduce(function(s,i){{return s+i.qty;}},0);
+    var badges = document.querySelectorAll('.cart-badge');
+    badges.forEach(function(b){{b.textContent=total>0?total:'';b.style.display=total>0?'inline':'none';}});
+  }}
+
+  function renderCart() {{
+    var cart = getCart();
+    var list = document.getElementById('cart-items-list');
+    var content = document.getElementById('cart-content');
+    var empty = document.getElementById('empty-cart');
+
+    if (!cart.length) {{
+      content.style.display = 'none';
+      empty.style.display = 'block';
+      return;
+    }}
+    content.style.display = 'grid';
+    empty.style.display = 'none';
+
+    var html = '';
+    var subtotal = 0;
+    cart.forEach(function(item, idx) {{
+      var lineTotal = item.price * item.qty;
+      subtotal += lineTotal;
+      html += '<div class="cart-item" id="item-'+idx+'">' +
+        '<img src="'+item.image+'" onerror="this.src=\\'data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' width=\\'80\\' height=\\'80\\'><text y=\\'50\\' font-size=\\'40\\'>🐾</text></svg>\\'">' +
+        '<div><div class="item-name">'+item.name.substring(0,55)+'</div>' +
+        '<div class="item-price">€'+item.price.toFixed(2)+'</div>' +
+        '<div class="qty-ctrl">' +
+        '<button class="qty-btn" onclick="changeQty('+idx+',-1)">−</button>' +
+        '<span class="qty-val">'+item.qty+'</span>' +
+        '<button class="qty-btn" onclick="changeQty('+idx+',1)">+</button>' +
+        '<span style="font-size:0.82rem;color:#888;margin-left:4px">= €'+(lineTotal).toFixed(2)+'</span>' +
+        '</div></div>' +
+        '<button class="remove-btn" onclick="removeItem('+idx+')" title="Eliminar">🗑️</button>' +
+        '</div>';
+    }});
+    list.innerHTML = html;
+
+    document.getElementById('subtotal').textContent = '€'+subtotal.toFixed(2);
+    document.getElementById('total').textContent = '€'+subtotal.toFixed(2);
+  }}
+
+  function changeQty(idx, delta) {{
+    var cart = getCart();
+    if (!cart[idx]) return;
+    cart[idx].qty = Math.max(1, Math.min(10, cart[idx].qty + delta));
+    saveCart(cart);
+    renderCart();
+  }}
+
+  function removeItem(idx) {{
+    var cart = getCart();
+    cart.splice(idx, 1);
+    saveCart(cart);
+    renderCart();
+  }}
+
+  async function checkout() {{
+    var cart = getCart();
+    if (!cart.length) return;
+    var btn = document.getElementById('checkout-btn');
+    var loading = document.getElementById('loading');
+    btn.disabled = true;
+    loading.style.display = 'block';
+
+    // Pixel: InitiateCheckout
+    if (typeof fbq !== 'undefined') {{
+      var total = cart.reduce(function(s,i){{return s+i.price*i.qty;}},0);
+      fbq('track', 'InitiateCheckout', {{
+        content_ids: cart.map(function(i){{return String(i.id);}}),
+        content_type: 'product',
+        value: total,
+        currency: 'EUR',
+        num_items: cart.reduce(function(s,i){{return s+i.qty;}},0)
+      }});
+    }}
+
+    try {{
+      var cartPayload = cart.map(function(i) {{
+        return {{
+          id: i.id, sku: i.sku || '', name: i.name,
+          selling_price: i.price, wholesale_price: i.wholesale || 0,
+          image_url: i.image, qty: i.qty
+        }};
+      }});
+      var resp = await fetch(CHECKOUT_URL, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{cart: cartPayload}})
+      }});
+      var data = await resp.json();
+      if (data.checkout_url) {{
+        localStorage.removeItem('patahogar_cart');
+        window.location.href = data.checkout_url;
+      }} else {{
+        alert('Error al preparar el pago: ' + (data.error || 'Intenta de nuevo'));
+        btn.disabled = false;
+        loading.style.display = 'none';
+      }}
+    }} catch(e) {{
+      alert('Error de conexión. Intenta de nuevo.');
+      btn.disabled = false;
+      loading.style.display = 'none';
+    }}
+  }}
+
+  // Init
+  renderCart();
+  updateCartBadge();
+</script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
@@ -1325,6 +1629,14 @@ async def hourly_security_check():
     except Exception as e:
         logger.error(f"Security check failed: {e}")
 
+async def hourly_abandoned_cart_check():
+    try:
+        result = await order_manager.check_abandoned_carts()
+        if result.get("recovery_emails_sent", 0) > 0:
+            logger.info(f"Abandoned cart recovery: {result['recovery_emails_sent']} emails sent")
+    except Exception as e:
+        logger.error(f"Abandoned cart check failed: {e}")
+
 async def send_daily_report():
     try:
         products  = await product_manager.get_current_products()
@@ -1381,6 +1693,7 @@ async def startup():
     scheduler.add_job(daily_marketing_tasks, 'cron', hour=9, minute=0)
     scheduler.add_job(daily_customer_service, 'interval', hours=3)
     scheduler.add_job(hourly_security_check, 'interval', hours=1)
+    scheduler.add_job(hourly_abandoned_cart_check, 'interval', hours=1)
     scheduler.add_job(send_daily_report, 'cron', hour=22, minute=0)
     scheduler.start()
 
