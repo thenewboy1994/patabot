@@ -574,6 +574,20 @@ async def product_page(product_id: int):
     if not img_tags:
         img_tags = f'<div style="width:100%;height:300px;background:#f5f5f5;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:80px">🐾</div>'
 
+    # Build upsell: 4 products from same category (excluding current)
+    all_products = await product_manager.get_current_products()
+    upsell_pool = [p for p in all_products
+                   if p.get("image_url") and p.get("id") != product_id
+                   and p.get("category", "") == category][:4]
+    if len(upsell_pool) < 4:
+        extras = [p for p in all_products
+                  if p.get("image_url") and p.get("id") != product_id
+                  and p not in upsell_pool]
+        upsell_pool += extras[:4 - len(upsell_pool)]
+    upsell_cards = ""
+    for up in upsell_pool:
+        upsell_cards += f'<a href="/product/{up["id"]}" class="upsell-card"><img src="{up.get("image_url","")}" loading="lazy"><p>{str(up.get("name",""))[:45]}</p><span>€{up.get("selling_price",0):.2f}</span></a>'
+
     checkout_url = f"https://patabot-production.up.railway.app/api/checkout/create-session"
 
     html = f"""<!DOCTYPE html>
@@ -638,6 +652,15 @@ async def product_page(product_id: int):
     .qty-row{{display:flex;align-items:center;gap:12px;margin:12px 0}}
     .qty-btn{{width:36px;height:36px;border:2px solid #1a5e35;background:white;color:#1a5e35;border-radius:8px;font-size:1.2rem;cursor:pointer}}
     .qty-input{{width:60px;text-align:center;border:2px solid #ddd;border-radius:8px;padding:6px;font-size:1rem}}
+    .upsell{{background:white;border-radius:12px;padding:24px;margin-top:24px}}
+    .upsell h3{{color:#1a5e35;margin-bottom:16px;font-size:1.1rem}}
+    .upsell-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}
+    @media(max-width:600px){{.upsell-grid{{grid-template-columns:repeat(2,1fr)}}}}
+    .upsell-card{{border:1px solid #eee;border-radius:10px;padding:10px;text-align:center;cursor:pointer;transition:box-shadow 0.2s;text-decoration:none;color:inherit;display:block}}
+    .upsell-card:hover{{box-shadow:0 4px 12px rgba(0,0,0,0.12);border-color:#1a5e35}}
+    .upsell-card img{{width:100%;height:90px;object-fit:contain;border-radius:6px;margin-bottom:6px}}
+    .upsell-card p{{font-size:0.78rem;color:#333;line-height:1.3;margin-bottom:4px;font-weight:600}}
+    .upsell-card span{{color:#1a5e35;font-weight:bold;font-size:0.9rem}}
   </style>
 </head>
 <body>
@@ -692,6 +715,8 @@ async def product_page(product_id: int):
   </div>
 
   {f'<div class="desc"><h3>📋 Descripción del producto</h3><p style="line-height:1.7;color:#555">{desc_es}</p></div>' if desc_es else ""}
+
+  {f'<div class="upsell"><h3>🔥 También te puede interesar</h3><div class="upsell-grid">{upsell_cards}</div></div>' if upsell_cards else ""}
 
 </div>
 
@@ -1034,6 +1059,126 @@ async def propose_ad(request: Request):
 async def create_content(request: Request):
     data = await request.json()
     return await marketing_manager.create_product_content(data.get("product_id"))
+
+# ════════════════════════════════════════════════════════
+# SUCCESS PAGE — After Stripe Payment
+# ════════════════════════════════════════════════════════
+
+@app.get("/success", response_class=HTMLResponse)
+async def success_page(session_id: str = Query("", alias="session_id")):
+    """
+    Stripe redirects here after successful payment.
+    - Fires Meta Pixel Purchase event (browser-side)
+    - Shows order confirmation to customer
+    - Suggests related products (upsell)
+    """
+    pixel_id = os.getenv("META_PIXEL_ID", "")
+
+    # Fetch top 3 products for upsell
+    all_products = await product_manager.get_current_products()
+    upsell_products = [p for p in all_products if p.get("image_url")][:3]
+    upsell_html = ""
+    for p in upsell_products:
+        upsell_html += f"""
+        <a href="/product/{p['id']}" style="text-decoration:none;color:inherit">
+          <div style="background:white;border-radius:10px;padding:14px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,0.08);transition:transform 0.2s" onmouseover="this.style.transform='translateY(-4px)'" onmouseout="this.style.transform='none'">
+            <img src="{p.get('image_url','')}" style="width:100%;height:120px;object-fit:contain;border-radius:6px;margin-bottom:8px">
+            <p style="font-size:0.85rem;color:#333;margin:4px 0;font-weight:600">{str(p.get('name',''))[:40]}</p>
+            <p style="color:#1a5e35;font-weight:bold">€{p.get('selling_price',0):.2f}</p>
+          </div>
+        </a>"""
+
+    pixel_script = ""
+    if pixel_id:
+        pixel_script = f"""
+  <script>
+    !function(f,b,e,v,n,t,s){{if(f.fbq)return;n=f.fbq=function(){{n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)}};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}}(window,
+    document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '{pixel_id}');
+    fbq('track', 'PageView');
+    fbq('track', 'Purchase', {{currency:'EUR', value: 0}});
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+    src="https://www.facebook.com/tr?id={pixel_id}&ev=Purchase&noscript=1"/></noscript>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>¡Pedido Confirmado! | PataHogar</title>
+  {pixel_script}
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333}}
+    .nav{{background:#1a5e35;padding:12px 20px;display:flex;align-items:center;justify-content:space-between}}
+    .nav a{{color:white;text-decoration:none;font-size:1.1rem;font-weight:bold}}
+    .container{{max-width:700px;margin:40px auto;padding:20px;text-align:center}}
+    .card{{background:white;border-radius:16px;padding:40px 30px;box-shadow:0 4px 20px rgba(0,0,0,0.08);margin-bottom:30px}}
+    .checkmark{{width:80px;height:80px;background:#27ae60;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:40px}}
+    h1{{color:#1a1a1a;font-size:1.8rem;margin-bottom:10px}}
+    .subtitle{{color:#666;font-size:1rem;margin-bottom:24px;line-height:1.6}}
+    .steps{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:24px 0;text-align:center}}
+    .step{{background:#f0f9f0;border-radius:10px;padding:14px 8px}}
+    .step .icon{{font-size:1.8rem;margin-bottom:6px}}
+    .step p{{font-size:0.8rem;color:#555;line-height:1.4}}
+    .btn{{display:inline-block;background:#ff6b35;color:white;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:bold;font-size:1rem;margin:8px}}
+    .btn-green{{background:#1a5e35}}
+    .upsell{{margin-top:10px}}
+    .upsell h3{{color:#1a5e35;margin-bottom:16px;font-size:1.1rem}}
+    .upsell-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}}
+    @media(max-width:500px){{.steps{{grid-template-columns:1fr}}.upsell-grid{{grid-template-columns:1fr}}}}
+    .footer{{color:#888;font-size:0.82rem;margin-top:30px;padding-bottom:20px}}
+  </style>
+</head>
+<body>
+<nav class="nav">
+  <a href="https://patahogar.com">🐾 PataHogar</a>
+  <span style="color:#ff6b35;font-size:0.9rem">✅ Pago completado</span>
+</nav>
+
+<div class="container">
+  <div class="card">
+    <div class="checkmark">✅</div>
+    <h1>¡Gracias por tu compra!</h1>
+    <p class="subtitle">
+      Tu pedido ha sido confirmado y ya está siendo procesado.<br>
+      Recibirás un email con los detalles y el número de seguimiento en breve.
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="icon">✅</div>
+        <p><b>Pago confirmado</b><br>Tu pago se procesó con éxito</p>
+      </div>
+      <div class="step">
+        <div class="icon">📦</div>
+        <p><b>Preparando envío</b><br>BigBuy prepara tu pedido (24-48h)</p>
+      </div>
+      <div class="step">
+        <div class="icon">🚚</div>
+        <p><b>Entrega estimada</b><br>3-7 días laborables</p>
+      </div>
+    </div>
+
+    <a href="https://patahogar.com/catalog.html" class="btn btn-green">🛍️ Seguir comprando</a>
+    <a href="mailto:info@patahogar.com" class="btn" style="background:#3498db">✉️ ¿Preguntas?</a>
+  </div>
+
+  {f'''<div class="card upsell">
+    <h3>🔥 También te puede gustar</h3>
+    <div class="upsell-grid">{upsell_html}</div>
+  </div>''' if upsell_html else ""}
+
+  <p class="footer">PataHogar — Mascotas &amp; Hogar con Amor 🐾 | <a href="/privacy" style="color:#888">Privacidad</a> | <a href="/terms" style="color:#888">Términos</a></p>
+</div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
 
 # ════════════════════════════════════════════════════════
 # STRIPE CHECKOUT + ORDERS (Phase 3)

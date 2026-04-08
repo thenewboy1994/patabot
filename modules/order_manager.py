@@ -29,8 +29,10 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 OWNER_EMAIL = os.getenv("OWNER_EMAIL", "mohaelmansouri.1994@gmail.com")
-SUCCESS_URL = os.getenv("SUCCESS_URL", "https://patahogar.com/success.html")
+SUCCESS_URL = os.getenv("SUCCESS_URL", "https://patabot-production.up.railway.app/success")
 CANCEL_URL = os.getenv("CANCEL_URL", "https://patahogar.com/catalog.html")
+META_PIXEL_ID = os.getenv("META_PIXEL_ID", "")
+META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN", "")
 _CACHE_DIR = Path(os.getenv("CACHE_DIR", "."))
 ORDERS_FILE = _CACHE_DIR / "orders.json"
 
@@ -166,27 +168,34 @@ class OrderManager:
         Process Stripe webhook — called when Stripe confirms payment.
         Triggers BigBuy order submission automatically.
         """
-        # Verify webhook signature
-        if STRIPE_WEBHOOK_SECRET:
-            try:
-                import hmac
-                import hashlib
-                parts = {}
-                for item in stripe_signature.split(","):
-                    k, v = item.split("=", 1)
-                    parts[k] = v
-                timestamp = parts.get("t", "")
-                sig = parts.get("v1", "")
-                signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
-                expected = hmac.new(
-                    STRIPE_WEBHOOK_SECRET.encode(),
-                    signed_payload.encode(),
-                    hashlib.sha256
-                ).hexdigest()
-                if not hmac.compare_digest(expected, sig):
-                    return {"error": "Invalid webhook signature"}
-            except Exception as e:
-                logger.warning(f"Webhook signature check failed: {e}")
+        # Verify webhook signature — mandatory, reject if invalid
+        if not STRIPE_WEBHOOK_SECRET:
+            logger.error("STRIPE_WEBHOOK_SECRET not set — rejecting all webhooks for security")
+            return {"error": "Webhook secret not configured", "status": 500}
+        try:
+            import hmac
+            import hashlib
+            parts = {}
+            for item in stripe_signature.split(","):
+                k, v = item.split("=", 1)
+                parts[k] = v
+            timestamp = parts.get("t", "")
+            sig = parts.get("v1", "")
+            if not timestamp or not sig:
+                logger.warning("Webhook missing timestamp or signature")
+                return {"error": "Invalid signature format", "status": 400}
+            signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
+            expected = hmac.new(
+                STRIPE_WEBHOOK_SECRET.encode(),
+                signed_payload.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            if not hmac.compare_digest(expected, sig):
+                logger.warning("Webhook signature mismatch — rejected")
+                return {"error": "Invalid webhook signature", "status": 401}
+        except Exception as e:
+            logger.error(f"Webhook signature check error: {e}")
+            return {"error": "Signature verification failed", "status": 400}
 
         try:
             event = json.loads(payload)
@@ -285,6 +294,7 @@ class OrderManager:
         self._save_orders()
         await self._send_customer_confirmation(order)
         await self._notify_owner_new_order(order)
+        asyncio.create_task(self._fire_meta_purchase_event(order))
 
         if order["bigbuy_order_id"]:
             asyncio.create_task(self._check_tracking_later(order_id, delay=1800))
@@ -618,6 +628,63 @@ class OrderManager:
         </div>
         """
         self._send_email(OWNER_EMAIL, f"⚠️ Error pedido {order['id']} — REVISAR", html)
+
+    # ─── Meta Conversions API ───
+
+    async def _fire_meta_purchase_event(self, order: dict):
+        """
+        إرسال حدث Purchase إلى Meta Conversions API (Server-Side).
+        هذا يتيح لـ Meta تتبع المبيعات الحقيقية وتحسين الإعلانات.
+        """
+        if not META_PIXEL_ID or not META_ACCESS_TOKEN:
+            logger.warning("META_PIXEL_ID or META_ACCESS_TOKEN not set — Purchase event not fired")
+            return
+
+        import hashlib
+        customer = order["customer"]
+
+        def sha256_hash(value: str) -> str:
+            return hashlib.sha256(value.strip().lower().encode()).hexdigest() if value else ""
+
+        event_data = {
+            "data": [{
+                "event_name": "Purchase",
+                "event_time": int(datetime.now().timestamp()),
+                "action_source": "website",
+                "event_source_url": f"https://patahogar.com/product/{order.get('product_sku', '')}",
+                "user_data": {
+                    "em": [sha256_hash(customer.get("email", ""))],
+                    "ph": [sha256_hash(customer.get("phone", ""))],
+                    "fn": [sha256_hash(customer.get("first_name", ""))],
+                    "ln": [sha256_hash(customer.get("last_name", ""))],
+                    "ct": [sha256_hash(customer.get("city", ""))],
+                    "zp": [sha256_hash(customer.get("postcode", ""))],
+                    "country": [sha256_hash(customer.get("country", ""))],
+                },
+                "custom_data": {
+                    "currency": "EUR",
+                    "value": round(order.get("selling_price", 0), 2),
+                    "content_ids": [str(order.get("product_sku", ""))],
+                    "content_type": "product",
+                    "order_id": order.get("id", ""),
+                    "num_items": order.get("quantity", 1),
+                }
+            }]
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(
+                    f"https://graph.facebook.com/v21.0/{META_PIXEL_ID}/events",
+                    params={"access_token": META_ACCESS_TOKEN},
+                    json=event_data
+                )
+                if r.status_code == 200:
+                    logger.info(f"✅ Meta Purchase event fired for order {order['id']} — €{order.get('selling_price', 0)}")
+                else:
+                    logger.error(f"Meta Purchase event error {r.status_code}: {r.text[:300]}")
+        except Exception as e:
+            logger.error(f"Meta Purchase event exception: {e}")
 
     # ─── Order Queries ───
 
