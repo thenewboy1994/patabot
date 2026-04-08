@@ -851,133 +851,870 @@ async def product_page(product_id: int):
     return HTMLResponse(content=html)
 
 
+def _get_shared_head_scripts() -> str:
+    """Returns shared cookie banner, WhatsApp button, and GA4 placeholder HTML."""
+    return """
+<!-- Google Analytics 4 — add your GA4 ID below -->
+<!-- <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-XXXXXXXXXX');
+</script> -->
+
+<!-- Cookie Consent Banner -->
+<div id="cookie-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1a5e35;color:white;padding:14px 20px;z-index:9999;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-family:'Segoe UI',Arial,sans-serif;font-size:0.9rem;">
+  <span>🍪 Usamos cookies técnicas y analíticas para mejorar tu experiencia. <a href="/privacy" style="color:#ff6b35;text-decoration:underline">Más información</a></span>
+  <button onclick="acceptCookies()" style="background:#ff6b35;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-weight:bold;font-size:0.9rem;">Aceptar</button>
+</div>
+<script>
+  (function() {
+    if (!localStorage.getItem('ph_cookies_accepted')) {
+      var banner = document.getElementById('cookie-banner');
+      if (banner) banner.style.display = 'flex';
+    }
+  })();
+  function acceptCookies() {
+    localStorage.setItem('ph_cookies_accepted', '1');
+    var banner = document.getElementById('cookie-banner');
+    if (banner) banner.style.display = 'none';
+  }
+</script>
+
+<!-- WhatsApp Floating Button -->
+<a href="https://wa.me/34600000000?text=Hola%2C%20tengo%20una%20pregunta%20sobre%20mi%20pedido%20en%20PataHogar" target="_blank"
+   title="Contactar por WhatsApp"
+   style="position:fixed;bottom:24px;right:24px;background:#25d366;color:white;width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.6rem;box-shadow:0 4px 12px rgba(0,0,0,0.25);z-index:9998;text-decoration:none;">
+  💬
+</a>
+"""
+
+
+def _get_shared_footer() -> str:
+    """Returns a common footer for all PataBot HTML pages."""
+    return """
+<div class="footer-strip" style="background:#1a5e35;color:rgba(255,255,255,0.85);text-align:center;padding:20px 16px;margin-top:40px;font-size:0.85rem;line-height:1.8;">
+  <strong>PataHogar</strong> — Mascotas &amp; Hogar con Amor 🐾<br>
+  Valencia, España · <a href="mailto:info@patahogar.com" style="color:#ff6b35;">info@patahogar.com</a><br>
+  <span style="opacity:0.8">
+    <a href="https://patahogar.com" style="color:rgba(255,255,255,0.8);text-decoration:none;">Tienda</a> ·
+    <a href="/faq" style="color:rgba(255,255,255,0.8);text-decoration:none;">FAQ</a> ·
+    <a href="/shipping" style="color:rgba(255,255,255,0.8);text-decoration:none;">Envíos</a> ·
+    <a href="/about" style="color:rgba(255,255,255,0.8);text-decoration:none;">Sobre Nosotros</a> ·
+    <a href="/privacy" style="color:rgba(255,255,255,0.8);text-decoration:none;">Privacidad</a> ·
+    <a href="/terms" style="color:rgba(255,255,255,0.8);text-decoration:none;">Términos</a>
+  </span>
+</div>
+"""
+
+
+def _get_nav(active: str = "") -> str:
+    """Returns the common navbar."""
+    return f"""<nav style="background:#1a5e35;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+  <a href="https://patahogar.com" style="color:white;text-decoration:none;font-size:1.1rem;font-weight:bold;">🐾 PataHogar</a>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+    <a href="https://patahogar.com/catalog.html" style="color:rgba(255,255,255,0.85);text-decoration:none;font-size:0.9rem;">Tienda</a>
+    <a href="/faq" style="color:rgba(255,255,255,0.85);text-decoration:none;font-size:0.9rem;">FAQ</a>
+    <a href="/shipping" style="color:rgba(255,255,255,0.85);text-decoration:none;font-size:0.9rem;">Envíos</a>
+    <a href="/cart" style="color:white;text-decoration:none;font-size:0.9rem;font-weight:bold;">🛒 Carrito</a>
+  </div>
+</nav>"""
+
+
+@app.get("/faq", response_class=HTMLResponse)
+async def faq_page():
+    """Preguntas Frecuentes"""
+    nav = _get_nav("faq")
+    footer = _get_shared_footer()
+    scripts = _get_shared_head_scripts()
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Preguntas Frecuentes | PataHogar</title>
+  <meta name="description" content="Respuestas a las preguntas más frecuentes sobre pedidos, envíos, devoluciones y pagos en PataHogar.">
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333;line-height:1.7}}
+    .container{{max-width:900px;margin:0 auto;padding:28px 20px}}
+    h1{{color:#1a5e35;font-size:2rem;margin-bottom:8px;border-bottom:3px solid #ff6b35;padding-bottom:10px}}
+    .subtitle{{color:#666;margin-bottom:28px;font-size:1rem}}
+    .faq-section{{margin-bottom:32px}}
+    .faq-section h2{{color:#1a5e35;font-size:1.15rem;margin-bottom:12px;padding:8px 0;border-bottom:1px solid #e0e0e0}}
+    .faq-item{{background:white;border-radius:10px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,0.06);overflow:hidden}}
+    .faq-q{{padding:16px 20px;cursor:pointer;font-weight:600;color:#1a1a1a;display:flex;justify-content:space-between;align-items:center;user-select:none}}
+    .faq-q:hover{{background:#f0f9f4}}
+    .faq-a{{padding:0 20px 16px;color:#555;font-size:0.95rem;display:none}}
+    .faq-a.open{{display:block}}
+    .arrow{{transition:transform 0.2s;font-size:0.8rem;color:#1a5e35}}
+    .arrow.open{{transform:rotate(180deg)}}
+    .badge-tag{{background:#e8f5e9;color:#1a5e35;padding:3px 10px;border-radius:12px;font-size:0.8rem;font-weight:normal;margin-left:8px}}
+  </style>
+</head>
+<body>
+{nav}
+<div class="container">
+<h1>Preguntas Frecuentes</h1>
+<p class="subtitle">Todo lo que necesitas saber sobre PataHogar. ¿No encuentras tu respuesta? <a href="mailto:info@patahogar.com" style="color:#1a5e35;">Escríbenos</a>.</p>
+
+<div class="faq-section">
+<h2>🛒 Cómo Comprar</h2>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cómo realizo un pedido? <span class="arrow">▼</span></div>
+  <div class="faq-a">Navega por nuestro catálogo, elige el producto que te guste, selecciona la cantidad y haz clic en <strong>"Comprar ahora"</strong>. Serás redirigido a la página segura de Stripe para introducir tus datos de pago y envío. En menos de 1 hora recibirás confirmación por email.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Qué métodos de pago aceptáis? <span class="arrow">▼</span></div>
+  <div class="faq-a">Aceptamos <strong>Visa, Mastercard, American Express</strong> y la mayoría de tarjetas de crédito y débito. El pago se procesa de forma segura mediante <strong>Stripe</strong> (certificado PCI DSS Nivel 1), el procesador de pagos más confiable de Europa. No almacenamos datos de tarjeta.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿En qué moneda se cobran los pedidos? <span class="arrow">▼</span></div>
+  <div class="faq-a">Todos los precios están en <strong>Euros (€ EUR)</strong>. Si tu tarjeta es de otro país, tu banco aplicará el tipo de cambio correspondiente.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Puedo modificar mi pedido después de realizarlo? <span class="arrow">▼</span></div>
+  <div class="faq-a">Puedes modificar tu pedido dentro de las <strong>2 horas</strong> siguientes a la compra escribiendo a <a href="mailto:info@patahogar.com" style="color:#1a5e35;">info@patahogar.com</a> con el asunto "MODIFICAR PEDIDO #XXX". Una vez procesado por nuestro proveedor logístico, no es posible realizar cambios.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cómo puedo cancelar mi pedido? <span class="arrow">▼</span></div>
+  <div class="faq-a">Puedes cancelar dentro de las <strong>2 horas</strong> del pago contactándonos en <a href="mailto:info@patahogar.com" style="color:#1a5e35;">info@patahogar.com</a>. Según la Directiva EU 2011/83/UE tienes también <strong>14 días de desistimiento</strong> desde la recepción del producto, sin necesidad de justificación.</div>
+</div>
+</div>
+
+<div class="faq-section">
+<h2>🚚 Envíos y Plazos</h2>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cuánto tarda en llegar mi pedido? <span class="arrow">▼</span></div>
+  <div class="faq-a">Los plazos estimados son:<br>
+  • <strong>España y Portugal:</strong> 2-4 días laborables<br>
+  • <strong>Francia, Alemania, Italia:</strong> 3-6 días laborables<br>
+  • <strong>Bélgica, Países Bajos, Austria, Suecia, Dinamarca:</strong> 4-8 días laborables<br>
+  • <strong>Suiza, Liechtenstein, Luxemburgo:</strong> 4-8 días laborables<br>
+  Los pedidos se procesan en 24-48h desde almacenes en Valencia, España.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cuánto cuesta el envío? <span class="arrow">▼</span></div>
+  <div class="faq-a"><strong>Envío GRATIS en pedidos de 30€ o más.</strong> Para pedidos inferiores a 30€ el coste varía según el destino (entre €3.99 y €5.99). Consulta la página de <a href="/shipping" style="color:#1a5e35;">Envíos</a> para más detalles.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿A qué países enviáis? <span class="arrow">▼</span></div>
+  <div class="faq-a">Enviamos a 12 países europeos: <strong>España, Francia, Alemania, Italia, Portugal, Bélgica, Países Bajos, Austria, Suecia, Suiza, Dinamarca y Liechtenstein</strong>. Consulta la <a href="/shipping" style="color:#1a5e35;">página de envíos</a> para tiempos y costes detallados.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cómo puedo seguir mi pedido? <span class="arrow">▼</span></div>
+  <div class="faq-a">Una vez enviado tu pedido, recibirás un <strong>email con número de seguimiento</strong>. Puedes rastrear tu paquete directamente en la web del transportista. Si no recibes el email en 48h laborables, revisa la carpeta de SPAM o contáctanos.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Desde dónde se envían los productos? <span class="arrow">▼</span></div>
+  <div class="faq-a">Todos los productos se envían desde los <strong>almacenes de BigBuy en Valencia, España</strong>. BigBuy es el mayor distribuidor B2B de Europa, con más de 200.000 referencias y certificación ISO. Al ser envíos intraeuropeos, no hay aranceles adicionales para países UE.</div>
+</div>
+</div>
+
+<div class="faq-section">
+<h2>↩️ Devoluciones y Garantía</h2>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cómo funciona el proceso de devolución? <span class="arrow">▼</span></div>
+  <div class="faq-a">Tienes <strong>30 días naturales</strong> desde la recepción para devolver cualquier producto. El proceso es:<br>
+  1. Envía un email a <a href="mailto:info@patahogar.com" style="color:#1a5e35;">info@patahogar.com</a> con asunto "DEVOLUCIÓN #pedido"<br>
+  2. Te enviaremos instrucciones y dirección de devolución en 24h<br>
+  3. Empaqueta el producto en su estado original<br>
+  4. Envía el paquete (los gastos de envío de devolución corren a tu cargo salvo defecto)<br>
+  5. Reembolso en 3-5 días hábiles tras recibir el artículo</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Qué hago si el producto llega dañado? <span class="arrow">▼</span></div>
+  <div class="faq-a">Si recibes un producto dañado o incorrecto, contáctanos en <a href="mailto:info@patahogar.com" style="color:#1a5e35;">info@patahogar.com</a> dentro de las <strong>48 horas</strong> de la recepción incluyendo fotos del daño. Te enviaremos un producto de reemplazo sin coste adicional o procederemos al reembolso completo.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cuánto tiempo tarda el reembolso? <span class="arrow">▼</span></div>
+  <div class="faq-a">Los reembolsos se procesan en <strong>3-5 días hábiles</strong> una vez confirmada la devolución. El importe se devuelve al mismo método de pago original (tarjeta de crédito/débito).</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Qué garantía tienen los productos? <span class="arrow">▼</span></div>
+  <div class="faq-a">Todos nuestros productos cuentan con <strong>2 años de garantía legal</strong> conforme a la Directiva UE 2019/771. BigBuy, nuestro proveedor, es distribuidor oficial de marcas europeas certificadas.</div>
+</div>
+</div>
+
+<div class="faq-section">
+<h2>🏪 Sobre PataHogar</h2>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Qué es el dropshipping? <span class="arrow">▼</span></div>
+  <div class="faq-a">El dropshipping es un modelo de venta donde los productos se envían directamente desde el proveedor al cliente final. PataHogar trabaja con <strong>BigBuy</strong>, el mayor distribuidor B2B de Europa, garantizando tiempos de envío rápidos y productos de calidad certificada. No hay intermediarios extra: tu pedido va directo desde Valencia a tu puerta.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿En qué idiomas ofrecéis soporte? <span class="arrow">▼</span></div>
+  <div class="faq-a">Ofrecemos atención al cliente en <strong>Español, Francés, Inglés y Árabe</strong>. Escríbenos en tu idioma preferido a <a href="mailto:info@patahogar.com" style="color:#1a5e35;">info@patahogar.com</a>.</div>
+</div>
+
+<div class="faq-item">
+  <div class="faq-q" onclick="toggle(this)">¿Cómo puedo contactaros? <span class="arrow">▼</span></div>
+  <div class="faq-a">Puedes contactarnos por:<br>
+  • <strong>Email:</strong> <a href="mailto:info@patahogar.com" style="color:#1a5e35;">info@patahogar.com</a> (respuesta en 24-48h laborables)<br>
+  • <strong>WhatsApp:</strong> Botón flotante verde en la esquina inferior derecha<br>
+  Estamos disponibles de lunes a viernes de 9:00 a 18:00 (CET).</div>
+</div>
+</div>
+
+</div>
+{footer}
+{scripts}
+<script>
+  function toggle(el) {{
+    var answer = el.nextElementSibling;
+    var arrow = el.querySelector('.arrow');
+    answer.classList.toggle('open');
+    arrow.classList.toggle('open');
+  }}
+</script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/shipping", response_class=HTMLResponse)
+async def shipping_page():
+    """Página de envíos y devoluciones"""
+    nav = _get_nav("shipping")
+    footer = _get_shared_footer()
+    scripts = _get_shared_head_scripts()
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Envíos y Devoluciones | PataHogar</title>
+  <meta name="description" content="Información sobre envíos a Europa, plazos, costes y cómo realizar devoluciones en PataHogar.">
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333;line-height:1.7}}
+    .container{{max-width:900px;margin:0 auto;padding:28px 20px}}
+    h1{{color:#1a5e35;font-size:2rem;margin-bottom:8px;border-bottom:3px solid #ff6b35;padding-bottom:10px}}
+    h2{{color:#1a5e35;font-size:1.2rem;margin:28px 0 12px}}
+    .date{{background:#f0f9f4;padding:8px 14px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:24px;display:inline-block}}
+    .card{{background:white;border-radius:12px;padding:24px;margin-bottom:20px;box-shadow:0 1px 6px rgba(0,0,0,0.07)}}
+    table{{width:100%;border-collapse:collapse;margin:12px 0;font-size:0.92rem}}
+    td,th{{padding:11px 14px;border:1px solid #e0e0e0;text-align:left}}
+    th{{background:#1a5e35;color:white;font-weight:600}}
+    tr:nth-child(even){{background:#f8fffe}}
+    .free-badge{{background:#e8f5e9;color:#1a5e35;padding:2px 8px;border-radius:10px;font-size:0.82rem;font-weight:600}}
+    .steps{{counter-reset:step;padding:0;list-style:none}}
+    .steps li{{counter-increment:step;padding:10px 10px 10px 50px;position:relative;margin-bottom:8px;background:#f8f9fa;border-radius:8px}}
+    .steps li::before{{content:counter(step);position:absolute;left:12px;top:10px;background:#1a5e35;color:white;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:0.85rem}}
+    .highlight-box{{background:#fff8e1;border-left:4px solid #ff6b35;padding:14px 18px;border-radius:0 8px 8px 0;margin:16px 0}}
+    .contact-link{{color:#1a5e35;font-weight:600}}
+  </style>
+</head>
+<body>
+{nav}
+<div class="container">
+<h1>Envíos y Devoluciones</h1>
+<span class="date">Actualizado: Abril 2026 | PataHogar, Valencia (España)</span>
+
+<div class="card">
+<h2>🚚 Tabla de Envíos por País</h2>
+<div class="highlight-box">
+  <strong>🎉 Envío GRATIS en todos los pedidos de 30€ o más</strong> — sin código, automático en el checkout.
+</div>
+<table>
+  <thead>
+    <tr><th>País</th><th>Plazo Estimado</th><th>Coste (&lt;30€)</th><th>Coste (≥30€)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>🇪🇸 España</td><td>2-4 días laborables</td><td>€3.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇵🇹 Portugal</td><td>2-4 días laborables</td><td>€3.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇫🇷 Francia</td><td>3-6 días laborables</td><td>€4.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇩🇪 Alemania</td><td>3-6 días laborables</td><td>€4.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇮🇹 Italia</td><td>3-6 días laborables</td><td>€4.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇧🇪 Bélgica</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇳🇱 Países Bajos</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇦🇹 Austria</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇸🇪 Suecia</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇩🇰 Dinamarca</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇨🇭 Suiza</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+    <tr><td>🇱🇮 Liechtenstein</td><td>4-8 días laborables</td><td>€5.99</td><td><span class="free-badge">GRATIS</span></td></tr>
+  </tbody>
+</table>
+<p style="font-size:0.85rem;color:#888;margin-top:8px">* Los plazos son estimados en días laborables (lunes-viernes). Excluye festivos locales.</p>
+</div>
+
+<div class="card">
+<h2>📦 Cómo Funciona el Envío</h2>
+<p>Todos los pedidos se procesan y envían desde los <strong>almacenes de BigBuy en Valencia, España</strong> — el mayor distribuidor B2B de Europa. Al tratarse de envíos intraeuropeos, <strong>no hay aranceles ni tasas aduaneras adicionales</strong> para los países de la UE (España, Francia, Alemania, Italia, Portugal, Bélgica, Países Bajos, Austria, Suecia, Dinamarca).</p>
+<p style="margin-top:10px">Para Suiza y Liechtenstein (fuera de la UE), los paquetes pueden estar sujetos a inspección aduanera aunque rara vez se aplican tasas adicionales en envíos de bajo valor.</p>
+
+<h2 style="margin-top:20px">📍 Seguimiento de tu Pedido</h2>
+<p>Recibirás un <strong>email con número de seguimiento</strong> en un plazo de 24-48h laborables tras la confirmación del pago. Con este número puedes rastrear tu paquete en tiempo real en la web del transportista asignado.</p>
+<p style="margin-top:8px">Si no recibes el email de seguimiento en 48h laborables, revisa la carpeta de SPAM o contáctanos en <a href="mailto:info@patahogar.com" class="contact-link">info@patahogar.com</a>.</p>
+</div>
+
+<div class="card">
+<h2>↩️ Política de Devoluciones (30 días)</h2>
+<p>Tienes <strong>30 días naturales</strong> desde la fecha de recepción para devolver cualquier producto, sin necesidad de justificación (derecho de desistimiento según Directiva UE 2011/83/UE).</p>
+
+<h2 style="margin-top:20px">Procedimiento de Devolución Paso a Paso</h2>
+<ol class="steps">
+  <li><strong>Contacta con nosotros</strong> — Envía un email a <a href="mailto:info@patahogar.com" class="contact-link">info@patahogar.com</a> con el asunto "DEVOLUCIÓN #NúmeroPedido" indicando el motivo.</li>
+  <li><strong>Recibe instrucciones</strong> — En 24h laborables te enviaremos la dirección de devolución y las instrucciones de empaquetado.</li>
+  <li><strong>Empaqueta el producto</strong> — El artículo debe estar en su estado original, con todos sus accesorios y embalaje si es posible.</li>
+  <li><strong>Envía el paquete</strong> — Usa el servicio de mensajería de tu elección. Los gastos de devolución corren a cargo del comprador, <em>salvo en caso de producto defectuoso o error nuestro</em>.</li>
+  <li><strong>Confirmación y reembolso</strong> — Una vez recibido e inspeccionado el artículo, procesaremos el reembolso en <strong>3-5 días hábiles</strong>.</li>
+</ol>
+
+<h2 style="margin-top:24px">🔴 Producto Dañado o Incorrecto</h2>
+<p>Si recibes un artículo dañado durante el transporte o un producto incorrecto:</p>
+<ul style="margin:10px 0 0 20px">
+  <li>Contáctanos en <strong>48 horas</strong> desde la recepción</li>
+  <li>Adjunta <strong>fotos del daño</strong> o del producto incorrecto</li>
+  <li>Te enviaremos un <strong>reemplazo sin coste</strong> o realizaremos el reembolso completo</li>
+  <li>Los gastos de devolución en este caso son a nuestro cargo</li>
+</ul>
+
+<h2 style="margin-top:24px">💰 Plazos de Reembolso</h2>
+<table>
+  <tr><th>Situación</th><th>Plazo de Reembolso</th></tr>
+  <tr><td>Devolución estándar (30 días)</td><td>3-5 días hábiles tras recibir el artículo</td></tr>
+  <tr><td>Producto dañado / incorrecto</td><td>3-5 días hábiles (sin necesidad de devolución en casos graves)</td></tr>
+  <tr><td>Desistimiento en 14 días (EU)</td><td>Máximo 14 días tras comunicar el desistimiento</td></tr>
+</table>
+<p style="font-size:0.85rem;color:#888;margin-top:8px">* El reembolso se realiza al mismo método de pago original.</p>
+</div>
+
+<div class="card">
+<h2>📞 Contacto para Envíos y Devoluciones</h2>
+<p>Para cualquier consulta sobre tu pedido, envío o devolución:</p>
+<p style="margin-top:12px;font-size:1.05rem">
+  📧 <strong><a href="mailto:info@patahogar.com" class="contact-link">info@patahogar.com</a></strong><br>
+  <span style="font-size:0.9rem;color:#666">Respuesta en 24-48h laborables · Lunes a Viernes 9:00-18:00 CET</span>
+</p>
+</div>
+</div>
+{footer}
+{scripts}
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/about", response_class=HTMLResponse)
+async def about_page():
+    """Sobre Nosotros"""
+    nav = _get_nav("about")
+    footer = _get_shared_footer()
+    scripts = _get_shared_head_scripts()
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sobre Nosotros | PataHogar</title>
+  <meta name="description" content="Conoce PataHogar — tienda online de mascotas y hogar con envíos rápidos a toda Europa desde Valencia, España.">
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333;line-height:1.7}}
+    .container{{max-width:900px;margin:0 auto;padding:28px 20px}}
+    h1{{color:#1a5e35;font-size:2rem;margin-bottom:8px;border-bottom:3px solid #ff6b35;padding-bottom:10px}}
+    h2{{color:#1a5e35;font-size:1.2rem;margin:28px 0 12px}}
+    .hero{{background:linear-gradient(135deg,#1a5e35 60%,#2d8f56 100%);color:white;padding:40px 32px;border-radius:14px;margin-bottom:28px;text-align:center}}
+    .hero h2{{color:white;font-size:1.6rem;margin:0 0 10px}}
+    .hero p{{color:rgba(255,255,255,0.9);font-size:1rem;max-width:600px;margin:0 auto}}
+    .card{{background:white;border-radius:12px;padding:24px;margin-bottom:20px;box-shadow:0 1px 6px rgba(0,0,0,0.07)}}
+    .values-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-top:16px}}
+    .value-card{{background:#f0f9f4;border-radius:10px;padding:18px;text-align:center}}
+    .value-card .icon{{font-size:2rem;margin-bottom:8px}}
+    .value-card h3{{color:#1a5e35;font-size:0.95rem;margin-bottom:6px}}
+    .value-card p{{font-size:0.85rem;color:#555}}
+    .trust-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-top:16px}}
+    .trust-logo{{background:#f8f9fa;border:1px solid #e0e0e0;border-radius:10px;padding:16px;text-align:center;font-weight:600;color:#555;font-size:0.9rem}}
+    .trust-logo .badge-icon{{font-size:1.8rem;display:block;margin-bottom:6px}}
+    .team-card{{display:flex;align-items:center;gap:20px;background:#f0f9f4;border-radius:12px;padding:20px}}
+    .avatar{{width:70px;height:70px;background:#1a5e35;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:2rem;flex-shrink:0}}
+    .team-info h3{{color:#1a5e35;margin-bottom:4px}}
+    .team-info p{{font-size:0.9rem;color:#555}}
+    @media(max-width:500px){{.team-card{{flex-direction:column;text-align:center}}}}
+  </style>
+</head>
+<body>
+{nav}
+<div class="container">
+<h1>Sobre PataHogar</h1>
+
+<div class="hero">
+  <div style="font-size:3rem;margin-bottom:12px">🐾</div>
+  <h2>Mascotas &amp; Hogar con Amor desde Valencia</h2>
+  <p>Somos una tienda online especializada en productos para mascotas y hogar, con envío rápido a toda Europa y el compromiso de ofrecerte la mejor experiencia de compra.</p>
+</div>
+
+<div class="card">
+<h2>Nuestra Historia</h2>
+<p>PataHogar nació con una misión clara: <strong>hacer llegar productos de calidad para mascotas y hogar a toda Europa</strong> de forma rápida, segura y asequible. Fundada por Mohamed El Mansouri en Valencia, España, PataHogar aprovecha la red logística de <strong>BigBuy</strong> — el mayor distribuidor B2B de Europa — para ofrecer más de 200.000 referencias a precios competitivos.</p>
+<p style="margin-top:12px">Creemos que cada mascota merece lo mejor, y que comprar online debe ser fácil, transparente y confiable. Por eso hemos construido una plataforma que combina la <strong>calidad europea</strong> con la <strong>comodidad digital</strong>.</p>
+</div>
+
+<div class="card">
+<h2>Por Qué Elegirnos</h2>
+<div class="values-grid">
+  <div class="value-card">
+    <div class="icon">🚚</div>
+    <h3>Envío Rápido</h3>
+    <p>Desde Valencia a toda Europa en 2-8 días laborables. Gratis a partir de 30€.</p>
+  </div>
+  <div class="value-card">
+    <div class="icon">🔒</div>
+    <h3>Pago Seguro</h3>
+    <p>Stripe PCI DSS Nivel 1 — el estándar más alto de seguridad en pagos online.</p>
+  </div>
+  <div class="value-card">
+    <div class="icon">↩️</div>
+    <h3>30 Días Devolución</h3>
+    <p>Más del doble del mínimo legal europeo. Tu satisfacción es nuestra prioridad.</p>
+  </div>
+  <div class="value-card">
+    <div class="icon">🏷️</div>
+    <h3>Precios Justos</h3>
+    <p>Trabajamos directamente con el proveedor para ofrecerte los mejores precios.</p>
+  </div>
+  <div class="value-card">
+    <div class="icon">🌍</div>
+    <h3>12 Países</h3>
+    <p>Enviamos a España, Francia, Alemania, Italia, Portugal y más países europeos.</p>
+  </div>
+  <div class="value-card">
+    <div class="icon">🛡️</div>
+    <h3>Garantía 2 Años</h3>
+    <p>Todos los productos con garantía legal europea. Certificación BigBuy.</p>
+  </div>
+</div>
+</div>
+
+<div class="card">
+<h2>Nuestros Partners de Confianza</h2>
+<div class="trust-grid">
+  <div class="trust-logo"><span class="badge-icon">🏪</span>BigBuy<br><small style="font-weight:normal;color:#888">Proveedor Logístico</small></div>
+  <div class="trust-logo"><span class="badge-icon">💳</span>Stripe<br><small style="font-weight:normal;color:#888">Pagos Seguros</small></div>
+  <div class="trust-logo"><span class="badge-icon">📣</span>Meta<br><small style="font-weight:normal;color:#888">Marketing Digital</small></div>
+  <div class="trust-logo"><span class="badge-icon">🔒</span>SSL<br><small style="font-weight:normal;color:#888">Cifrado HTTPS</small></div>
+  <div class="trust-logo"><span class="badge-icon">✉️</span>Resend<br><small style="font-weight:normal;color:#888">Email Transaccional</small></div>
+  <div class="trust-logo"><span class="badge-icon">🚂</span>Railway<br><small style="font-weight:normal;color:#888">Infraestructura Cloud</small></div>
+</div>
+</div>
+
+<div class="card">
+<h2>Nuestro Equipo</h2>
+<div class="team-card">
+  <div class="avatar">👨‍💻</div>
+  <div class="team-info">
+    <h3>Mohamed El Mansouri</h3>
+    <p><strong>Fundador &amp; CEO</strong> — Valencia, España</p>
+    <p style="margin-top:6px">Emprendedor digital apasionado por el comercio electrónico europeo y la tecnología. Con PataHogar busca democratizar el acceso a productos de calidad para mascotas y hogar en toda Europa.</p>
+  </div>
+</div>
+</div>
+
+<div class="card" style="text-align:center">
+<h2>¿Tienes alguna pregunta?</h2>
+<p>Estamos aquí para ayudarte. Consulta nuestras <a href="/faq" style="color:#1a5e35;font-weight:600">preguntas frecuentes</a> o escríbenos directamente.</p>
+<p style="margin-top:16px;font-size:1.1rem">
+  📧 <strong><a href="mailto:info@patahogar.com" style="color:#1a5e35">info@patahogar.com</a></strong>
+</p>
+<a href="https://patahogar.com/catalog.html" style="display:inline-block;margin-top:16px;background:#ff6b35;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;">
+  🛒 Ver Catálogo
+</a>
+</div>
+</div>
+{footer}
+{scripts}
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/sitemap.xml")
+async def sitemap():
+    """XML Sitemap for SEO"""
+    from fastapi.responses import Response
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://patahogar.com</loc><changefreq>daily</changefreq><priority>1.0</priority></url>
+  <url><loc>https://patahogar.com/catalog.html</loc><changefreq>daily</changefreq><priority>0.9</priority></url>
+  <url><loc>https://patabot-production.up.railway.app/faq</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://patabot-production.up.railway.app/shipping</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://patabot-production.up.railway.app/about</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://patabot-production.up.railway.app/privacy</loc><changefreq>yearly</changefreq><priority>0.4</priority></url>
+  <url><loc>https://patabot-production.up.railway.app/terms</loc><changefreq>yearly</changefreq><priority>0.4</priority></url>
+</urlset>"""
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.get("/robots.txt")
+async def robots():
+    """Robots.txt for search engines"""
+    from fastapi.responses import Response
+    content = "User-agent: *\nAllow: /\nSitemap: https://patabot-production.up.railway.app/sitemap.xml\n"
+    return Response(content=content, media_type="text/plain")
+
+
 @app.get("/privacy", response_class=HTMLResponse)
 async def privacy_page():
-    """Política de Privacidad — GDPR compliant"""
-    html = """<!DOCTYPE html>
+    """Política de Privacidad — Comprehensive GDPR compliant"""
+    nav = _get_nav("privacy")
+    footer = _get_shared_footer()
+    scripts = _get_shared_head_scripts()
+    html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Política de Privacidad | PataHogar</title>
+  <meta name="description" content="Política de Privacidad RGPD de PataHogar. Cómo tratamos tus datos personales, tus derechos y cómo ejercerlos.">
   <style>
-    body{font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px 24px;color:#333;line-height:1.7}
-    nav{background:#1a5e35;padding:12px 20px;border-radius:8px;margin-bottom:24px}
-    nav a{color:white;text-decoration:none;font-weight:bold}
-    h1{color:#1a5e35;border-bottom:3px solid #ff6b35;padding-bottom:10px}
-    h2{color:#1a5e35;margin-top:28px}
-    .date{background:#f0f9f4;padding:8px 14px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:20px}
-    footer{margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#888;font-size:.85rem}
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333;line-height:1.7}}
+    .container{{max-width:900px;margin:0 auto;padding:28px 20px}}
+    h1{{color:#1a5e35;font-size:2rem;margin-bottom:8px;border-bottom:3px solid #ff6b35;padding-bottom:10px}}
+    h2{{color:#1a5e35;font-size:1.1rem;margin:24px 0 8px;padding:8px 12px;background:#f0f9f4;border-left:4px solid #1a5e35;border-radius:0 6px 6px 0}}
+    h3{{color:#1a5e35;margin:16px 0 8px;font-size:0.95rem}}
+    .date{{background:#fff8e1;border:1px solid #ffe082;padding:10px 16px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:24px;display:inline-block}}
+    .card{{background:white;border-radius:12px;padding:24px;margin-bottom:16px;box-shadow:0 1px 6px rgba(0,0,0,0.07)}}
+    ul,ol{{margin:8px 0 8px 20px}}
+    li{{margin-bottom:4px}}
+    table{{width:100%;border-collapse:collapse;margin:12px 0;font-size:0.9rem}}
+    td,th{{padding:10px 14px;border:1px solid #e0e0e0;text-align:left;vertical-align:top}}
+    th{{background:#1a5e35;color:white}}
+    tr:nth-child(even){{background:#f8fffe}}
+    .rights-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:12px 0}}
+    .right-item{{background:#f0f9f4;border-radius:8px;padding:14px;font-size:0.88rem}}
+    .right-item strong{{color:#1a5e35;display:block;margin-bottom:4px}}
+    .warning-box{{background:#fff3cd;border-left:4px solid #ff6b35;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;font-size:0.92rem}}
+    a{{color:#1a5e35}}
   </style>
 </head>
 <body>
-<nav><a href="https://patahogar.com">🐾 PataHogar — Volver a la tienda</a></nav>
+{nav}
+<div class="container">
 <h1>Política de Privacidad</h1>
-<p class="date">Última actualización: Abril 2026 | Conforme al RGPD (UE) 2016/679</p>
+<span class="date">Última actualización: Abril 2026 | Conforme al RGPD (UE) 2016/679 y LOPDGDD (ES)</span>
 
+<div class="card">
 <h2>1. Responsable del Tratamiento</h2>
-<p><strong>PataHogar</strong> — Tienda online de mascotas y hogar<br>
-Propietario: Mohamed El Mansouri<br>
-Valencia, España<br>
-Contacto: <a href="mailto:info@patahogar.com">info@patahogar.com</a></p>
+<table>
+  <tr><td><strong>Nombre</strong></td><td>PataHogar — Tienda online de mascotas y hogar</td></tr>
+  <tr><td><strong>Titular</strong></td><td>Mohamed El Mansouri</td></tr>
+  <tr><td><strong>Domicilio</strong></td><td>Valencia, España</td></tr>
+  <tr><td><strong>Email de contacto</strong></td><td><a href="mailto:info@patahogar.com">info@patahogar.com</a></td></tr>
+  <tr><td><strong>Actividad</strong></td><td>Comercio electrónico de productos para mascotas y hogar (dropshipping B2C)</td></tr>
+</table>
+</div>
 
-<h2>2. Datos que Recopilamos</h2>
-<p>Al realizar una compra recopilamos: nombre completo, dirección de envío, correo electrónico y teléfono. El pago es procesado por <strong>Stripe</strong> — no almacenamos datos de tarjeta.</p>
+<div class="card">
+<h2>2. Datos Personales que Recopilamos</h2>
+<p>Recopilamos únicamente los datos estrictamente necesarios:</p>
+<table>
+  <thead><tr><th>Dato</th><th>Finalidad</th><th>Base Legal</th></tr></thead>
+  <tbody>
+    <tr><td>Nombre y apellidos</td><td>Identificación del pedido y envío</td><td>Ejecución del contrato (Art. 6.1.b)</td></tr>
+    <tr><td>Dirección postal</td><td>Entrega del producto</td><td>Ejecución del contrato (Art. 6.1.b)</td></tr>
+    <tr><td>Correo electrónico</td><td>Confirmación de pedido y seguimiento</td><td>Ejecución del contrato (Art. 6.1.b)</td></tr>
+    <tr><td>Teléfono</td><td>Contacto para entrega</td><td>Interés legítimo (Art. 6.1.f)</td></tr>
+    <tr><td>Datos de navegación (IP, cookies)</td><td>Seguridad y análisis de uso</td><td>Consentimiento (Art. 6.1.a) + Interés legítimo</td></tr>
+    <tr><td>Comportamiento en la tienda (Pixel Meta)</td><td>Publicidad personalizada</td><td>Consentimiento (Art. 6.1.a)</td></tr>
+  </tbody>
+</table>
+<div class="warning-box">⚠️ <strong>Pago:</strong> Los datos de tarjeta son procesados directamente por <strong>Stripe</strong>. PataHogar <em>nunca</em> almacena datos bancarios ni de tarjeta de crédito.</div>
+</div>
 
-<h2>3. Finalidad del Tratamiento</h2>
+<div class="card">
+<h2>3. Menores de Edad</h2>
+<p>PataHogar <strong>no recopila deliberadamente datos personales de menores de 16 años</strong>. Si eres menor de 16 años, no debes realizar compras ni proporcionar tus datos sin supervisión de un adulto responsable. Si somos informados de que hemos recibido datos de un menor, los eliminaremos inmediatamente. Si eres padre, madre o tutor y crees que tu hijo nos ha proporcionado datos, contáctanos en <a href="mailto:info@patahogar.com">info@patahogar.com</a>.</p>
+</div>
+
+<div class="card">
+<h2>4. Cookies y Tecnologías de Seguimiento</h2>
+<table>
+  <thead><tr><th>Tipo de Cookie</th><th>Descripción</th><th>Necesita Consentimiento</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Técnicas / Esenciales</strong></td><td>Carrito de compra (localStorage), sesión de usuario. Imprescindibles para el funcionamiento.</td><td>No (necesarias para el servicio)</td></tr>
+    <tr><td><strong>Analíticas</strong></td><td>Google Analytics 4 — mide visitas, páginas vistas, fuentes de tráfico de forma anonimizada.</td><td>Sí (consentimiento previo)</td></tr>
+    <tr><td><strong>Marketing / Publicidad</strong></td><td>Meta Pixel — rastrea conversiones y permite mostrar anuncios relevantes en Facebook/Instagram.</td><td>Sí (consentimiento previo)</td></tr>
+  </tbody>
+</table>
+<p style="margin-top:10px">Puedes retirar tu consentimiento en cualquier momento limpiando las cookies del navegador o usando las <a href="https://www.facebook.com/adpreferences" target="_blank">Preferencias de anuncios de Meta</a> y la extensión <a href="https://tools.google.com/dlpage/gaoptout" target="_blank">Google Analytics Opt-out</a>.</p>
+</div>
+
+<div class="card">
+<h2>5. Subprocesadores y Terceros</h2>
+<table>
+  <thead><tr><th>Empresa</th><th>País</th><th>Función</th><th>Garantías RGPD</th></tr></thead>
+  <tbody>
+    <tr><td><strong>BigBuy S.L.</strong></td><td>España (UE)</td><td>Proveedor logístico — procesa dirección de envío para preparar y enviar el pedido</td><td>Dentro de la UE — cumplimiento automático</td></tr>
+    <tr><td><strong>Stripe, Inc.</strong></td><td>EE.UU.</td><td>Procesador de pagos — gestiona datos de pago de forma segura (PCI DSS)</td><td>Marco de Privacidad UE-EE.UU. (DPF) + SCCs</td></tr>
+    <tr><td><strong>Meta Platforms</strong></td><td>EE.UU. / Irlanda</td><td>Pixel de conversión y publicidad en Facebook/Instagram</td><td>SCCs · Política de Datos de Meta</td></tr>
+    <tr><td><strong>Resend, Inc.</strong></td><td>EE.UU.</td><td>Envío de emails transaccionales (confirmaciones de pedido)</td><td>SCCs · GDPR Data Processing Agreement</td></tr>
+    <tr><td><strong>Railway Corp.</strong></td><td>EE.UU.</td><td>Infraestructura cloud donde se aloja el servidor PataBot</td><td>SCCs · SOC 2 Type II</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+<h2>6. Tus Derechos RGPD</h2>
+<p>Como titular de los datos tienes los siguientes derechos, que puedes ejercer en cualquier momento:</p>
+<div class="rights-grid">
+  <div class="right-item"><strong>Acceso (Art. 15)</strong> Solicitar copia de todos tus datos personales que tratamos.</div>
+  <div class="right-item"><strong>Rectificación (Art. 16)</strong> Corregir datos inexactos o incompletos.</div>
+  <div class="right-item"><strong>Supresión (Art. 17)</strong> Solicitar el borrado de tus datos ("derecho al olvido").</div>
+  <div class="right-item"><strong>Portabilidad (Art. 20)</strong> Recibir tus datos en formato estructurado y legible por máquina.</div>
+  <div class="right-item"><strong>Limitación (Art. 18)</strong> Solicitar que suspendamos el tratamiento mientras revisamos una reclamación.</div>
+  <div class="right-item"><strong>Oposición (Art. 21)</strong> Oponerte al tratamiento para fines de marketing directo en cualquier momento.</div>
+</div>
+
+<h3>Cómo ejercer tus derechos</h3>
+<ol>
+  <li>Envía un email a <a href="mailto:info@patahogar.com"><strong>info@patahogar.com</strong></a> con el asunto <em>"Ejercicio de Derechos RGPD"</em></li>
+  <li>Indica claramente qué derecho deseas ejercer y adjunta una copia de tu DNI/pasaporte para verificar tu identidad</li>
+  <li>Responderemos en un plazo máximo de <strong>30 días naturales</strong> (prorrogable a 90 días en casos complejos, con notificación previa)</li>
+  <li>Si la respuesta no te satisface, puedes presentar una reclamación ante la <strong>Agencia Española de Protección de Datos (AEPD)</strong>: <a href="https://www.aepd.es" target="_blank">aepd.es</a></li>
+</ol>
+</div>
+
+<div class="card">
+<h2>7. Decisiones Automatizadas</h2>
+<p>PataHogar <strong>no toma decisiones automatizadas con efectos significativos</strong> sobre los usuarios. El sistema PataBot automatiza la gestión de inventario y publicidad (selección de productos para anuncios), pero estas decisiones no afectan derechos individuales de clientes ni implican perfilado discriminatorio. La aprobación final de campañas publicitarias requiere siempre intervención humana del titular.</p>
+</div>
+
+<div class="card">
+<h2>8. Conservación de Datos</h2>
+<table>
+  <thead><tr><th>Tipo de dato</th><th>Plazo de conservación</th><th>Motivo</th></tr></thead>
+  <tbody>
+    <tr><td>Datos de pedido (nombre, dirección, email)</td><td>5 años desde la compra</td><td>Obligaciones fiscales y contables (Ley 58/2003 General Tributaria)</td></tr>
+    <tr><td>Datos de pago (procesados por Stripe)</td><td>Según política de Stripe</td><td>PataHogar no almacena datos bancarios</td></tr>
+    <tr><td>Cookies analíticas</td><td>13 meses</td><td>Análisis de uso y mejora del servicio</td></tr>
+    <tr><td>Datos de marketing (Pixel Meta)</td><td>Hasta retirada de consentimiento</td><td>Marketing personalizado basado en consentimiento</td></tr>
+    <tr><td>Consultas y reclamaciones</td><td>3 años</td><td>Posibles reclamaciones legales</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="card">
+<h2>9. Notificación de Brechas de Seguridad</h2>
+<p>En caso de brecha de seguridad que pueda suponer un riesgo para tus derechos y libertades, PataHogar se compromete a:</p>
 <ul>
-  <li>Procesar y enviar tu pedido a través de nuestro proveedor logístico</li>
-  <li>Enviarte confirmación de compra y número de seguimiento</li>
-  <li>Atender consultas y reclamaciones</li>
-  <li>Mejorar nuestros servicios y experiencia de compra</li>
+  <li>Notificar a la <strong>AEPD en un plazo máximo de 72 horas</strong> desde que tengamos conocimiento</li>
+  <li>Informar a los afectados directamente <strong>sin dilación indebida</strong> cuando la brecha suponga un alto riesgo</li>
+  <li>Documentar todas las brechas, incluso aquellas que no requieran notificación</li>
 </ul>
+</div>
 
-<h2>4. Base Legal</h2>
-<p>El tratamiento se basa en la <strong>ejecución del contrato de compraventa</strong> (Art. 6.1.b RGPD) y el <strong>interés legítimo</strong> para el funcionamiento del servicio.</p>
+<div class="card">
+<h2>10. Consentimiento para Marketing</h2>
+<p>PataHogar aplica un modelo de <strong>opt-in (consentimiento previo explícito)</strong> para comunicaciones comerciales:</p>
+<ul>
+  <li>No enviamos newsletters ni emails de marketing sin consentimiento previo y expreso</li>
+  <li>Las confirmaciones de pedido y emails transaccionales no son comunicaciones de marketing</li>
+  <li>Puedes revocar el consentimiento en cualquier momento usando el enlace "Cancelar suscripción" en cualquier email o escribiendo a <a href="mailto:info@patahogar.com">info@patahogar.com</a></li>
+</ul>
+</div>
 
-<h2>5. Conservación de Datos</h2>
-<p>Los datos de pedidos se conservan <strong>5 años</strong> para cumplir con obligaciones fiscales. Los datos de marketing se eliminan si ejerces tu derecho de oposición.</p>
+<div class="card">
+<h2>11. Transferencias Internacionales</h2>
+<p>Algunos de nuestros subprocesadores (Stripe, Meta, Resend, Railway) están establecidos en EE.UU. Las transferencias se realizan con las garantías adecuadas previstas en el RGPD:</p>
+<ul>
+  <li><strong>Decisiones de adecuación</strong> de la Comisión Europea donde estén disponibles</li>
+  <li><strong>Cláusulas Contractuales Tipo (SCCs)</strong> de la Comisión Europea (Decisión 2021/914/UE)</li>
+  <li><strong>Marco de Privacidad UE-EE.UU. (DPF)</strong> para empresas certificadas (Stripe)</li>
+</ul>
+</div>
 
-<h2>6. Tus Derechos (RGPD)</h2>
-<p>Tienes derecho a: <strong>Acceso, Rectificación, Supresión, Portabilidad, Limitación y Oposición</strong>. Ejércelos en: <a href="mailto:info@patahogar.com">info@patahogar.com</a><br>
-También puedes reclamar ante la <strong>Agencia Española de Protección de Datos</strong> (aepd.es).</p>
-
-<h2>7. Cookies</h2>
-<p>Usamos cookies técnicas necesarias para el carrito de compra y cookies analíticas de Google Analytics. Puedes gestionarlas desde la configuración de tu navegador.</p>
-
-<h2>8. Transferencias Internacionales</h2>
-<p>Stripe (EE.UU.) cumple con el Marco de Privacidad UE-EE.UU. BigBuy procesa pedidos desde la UE.</p>
-
-<h2>9. Pixel de Meta (Facebook)</h2>
-<p>Usamos el Pixel de Meta para medir la eficacia de nuestros anuncios y mostrar publicidad relevante. Puedes optar por no participar en <a href="https://www.facebook.com/adpreferences" target="_blank">Preferencias de anuncios de Meta</a>.</p>
-
-<footer>PataHogar &copy; 2026 | <a href="/terms">Términos y Condiciones</a> | <a href="https://patahogar.com">Tienda</a></footer>
-</body></html>"""
+<div class="card">
+<h2>12. Modificaciones de esta Política</h2>
+<p>Podemos actualizar esta Política de Privacidad para reflejar cambios legales o en nuestros servicios. Te informaremos de cambios significativos mediante un aviso visible en la web o por email. La fecha de última actualización siempre estará indicada al inicio del documento.</p>
+</div>
+</div>
+{footer}
+{scripts}
+</body>
+</html>"""
     return HTMLResponse(content=html)
 
 
 @app.get("/terms", response_class=HTMLResponse)
 async def terms_page():
-    """Términos y Condiciones de compra"""
-    html = """<!DOCTYPE html>
+    """Términos y Condiciones de compra — EU law compliant"""
+    nav = _get_nav("terms")
+    footer = _get_shared_footer()
+    scripts = _get_shared_head_scripts()
+    html = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Términos y Condiciones | PataHogar</title>
+  <meta name="description" content="Términos y Condiciones de compra de PataHogar. Derecho de desistimiento de 14 días, garantías, envíos y más.">
   <style>
-    body{font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px 24px;color:#333;line-height:1.7}
-    nav{background:#1a5e35;padding:12px 20px;border-radius:8px;margin-bottom:24px}
-    nav a{color:white;text-decoration:none;font-weight:bold}
-    h1{color:#1a5e35;border-bottom:3px solid #ff6b35;padding-bottom:10px}
-    h2{color:#1a5e35;margin-top:28px}
-    .date{background:#f0f9f4;padding:8px 14px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:20px}
-    table{width:100%;border-collapse:collapse;margin:12px 0}
-    td,th{padding:10px;border:1px solid #eee;text-align:left}
-    th{background:#f0f9f4;color:#1a5e35}
-    footer{margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#888;font-size:.85rem}
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333;line-height:1.7}}
+    .container{{max-width:900px;margin:0 auto;padding:28px 20px}}
+    h1{{color:#1a5e35;font-size:2rem;margin-bottom:8px;border-bottom:3px solid #ff6b35;padding-bottom:10px}}
+    h2{{color:#1a5e35;font-size:1.1rem;margin:24px 0 8px;padding:8px 12px;background:#f0f9f4;border-left:4px solid #1a5e35;border-radius:0 6px 6px 0}}
+    h3{{color:#1a5e35;margin:16px 0 8px;font-size:0.95rem}}
+    .date{{background:#fff8e1;border:1px solid #ffe082;padding:10px 16px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:24px;display:inline-block}}
+    .card{{background:white;border-radius:12px;padding:24px;margin-bottom:16px;box-shadow:0 1px 6px rgba(0,0,0,0.07)}}
+    ul,ol{{margin:8px 0 8px 20px}}
+    li{{margin-bottom:4px}}
+    table{{width:100%;border-collapse:collapse;margin:12px 0;font-size:0.9rem}}
+    td,th{{padding:10px 14px;border:1px solid #e0e0e0;text-align:left;vertical-align:top}}
+    th{{background:#1a5e35;color:white}}
+    tr:nth-child(even){{background:#f8fffe}}
+    .highlight-box{{background:#e8f5e9;border-left:4px solid #1a5e35;padding:14px 18px;border-radius:0 8px 8px 0;margin:12px 0}}
+    .warning-box{{background:#fff3cd;border-left:4px solid #ff6b35;padding:12px 16px;border-radius:0 8px 8px 0;margin:12px 0;font-size:0.92rem}}
+    a{{color:#1a5e35}}
+    .steps{{counter-reset:step;padding:0;list-style:none}}
+    .steps li{{counter-increment:step;padding:10px 10px 10px 50px;position:relative;margin-bottom:8px;background:#f8f9fa;border-radius:8px}}
+    .steps li::before{{content:counter(step);position:absolute;left:12px;top:10px;background:#1a5e35;color:white;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:0.85rem}}
   </style>
 </head>
 <body>
-<nav><a href="https://patahogar.com">🐾 PataHogar — Volver a la tienda</a></nav>
+{nav}
+<div class="container">
 <h1>Términos y Condiciones</h1>
-<p class="date">Última actualización: Abril 2026 | PataHogar, Valencia (España)</p>
+<span class="date">Última actualización: Abril 2026 | Conforme a Directiva UE 2011/83/UE · RDL 1/2007 · Ley 7/1996</span>
 
-<h2>1. Información General</h2>
-<p>PataHogar es una tienda online de productos para mascotas y hogar operada por Mohamed El Mansouri con sede en Valencia, España. Trabajamos bajo el modelo de <strong>dropshipping</strong> con proveedor europeo certificado (BigBuy, Valencia).</p>
+<div class="card">
+<h2>1. Información General del Comerciante</h2>
+<table>
+  <tr><td><strong>Nombre comercial</strong></td><td>PataHogar</td></tr>
+  <tr><td><strong>Titular</strong></td><td>Mohamed El Mansouri</td></tr>
+  <tr><td><strong>Domicilio</strong></td><td>Valencia, España</td></tr>
+  <tr><td><strong>Contacto</strong></td><td><a href="mailto:info@patahogar.com">info@patahogar.com</a></td></tr>
+  <tr><td><strong>Modelo de negocio</strong></td><td>Comercio electrónico dropshipping — proveedor logístico: BigBuy S.L. (Valencia, España)</td></tr>
+  <tr><td><strong>Legislación aplicable</strong></td><td>Derecho español y de la Unión Europea</td></tr>
+</table>
+<p style="margin-top:12px">Al realizar una compra en PataHogar, el usuario acepta íntegramente los presentes Términos y Condiciones. Te recomendamos leerlos antes de finalizar tu pedido.</p>
+</div>
 
+<div class="card">
 <h2>2. Proceso de Compra</h2>
-<ol>
-  <li>Selecciona el producto y haz clic en "Comprar ahora"</li>
-  <li>Revisa tu carrito y confirma la cantidad</li>
-  <li>Introduce tus datos de envío y pago en la página segura de <strong>Stripe</strong></li>
-  <li>Recibirás confirmación por email en menos de 1 hora</li>
-  <li>Tu pedido se envía desde nuestros almacenes europeos en 24-48h</li>
+<ol class="steps">
+  <li><strong>Selección del producto</strong> — Navega por el catálogo y añade al carrito el artículo deseado.</li>
+  <li><strong>Revisión del carrito</strong> — Comprueba las unidades y el precio total antes de proceder.</li>
+  <li><strong>Datos de envío y pago</strong> — Serás redirigido a la página segura de Stripe para introducir tus datos.</li>
+  <li><strong>Confirmación</strong> — Recibirás un email de confirmación en menos de 1 hora con el resumen de tu pedido.</li>
+  <li><strong>Preparación y envío</strong> — Tu pedido se prepara en los almacenes de BigBuy (Valencia) y se envía en 24-48h laborables.</li>
+  <li><strong>Seguimiento</strong> — Recibirás un número de seguimiento por email cuando el pedido sea recogido por el transportista.</li>
 </ol>
+<div class="warning-box">⚠️ El contrato de compraventa queda formalizado en el momento en que PataHogar envía la confirmación del pedido por email.</div>
+</div>
 
+<div class="card">
 <h2>3. Precios y Pago</h2>
-<p>Todos los precios incluyen IVA. Aceptamos: <strong>Visa, Mastercard, American Express</strong> y otras tarjetas procesadas por Stripe (PCI DSS Level 1).</p>
+<ul>
+  <li>Todos los precios están expresados en <strong>Euros (€)</strong> e incluyen el <strong>IVA aplicable</strong>.</li>
+  <li>PataHogar se reserva el derecho a modificar precios, pero los cambios no afectarán a pedidos ya confirmados.</li>
+  <li>Métodos de pago aceptados: <strong>Visa, Mastercard, American Express</strong> y otras tarjetas procesadas por Stripe.</li>
+  <li>El cargo se realiza en el momento de confirmar el pedido.</li>
+  <li>Stripe es certificado <strong>PCI DSS Nivel 1</strong> — el estándar de seguridad más alto para pagos con tarjeta.</li>
+</ul>
+</div>
 
+<div class="card">
 <h2>4. Envíos</h2>
 <table>
-  <tr><th>Destino</th><th>Plazo</th><th>Coste</th></tr>
-  <tr><td>España, Portugal</td><td>2-4 días laborables</td><td>Gratis +30€ / €3.99 resto</td></tr>
-  <tr><td>Francia, Alemania, Italia</td><td>3-6 días laborables</td><td>Gratis +30€ / €4.99 resto</td></tr>
-  <tr><td>Resto de Europa</td><td>4-8 días laborables</td><td>Gratis +30€ / €5.99 resto</td></tr>
+  <thead><tr><th>Destino</th><th>Plazo estimado</th><th>Coste (&lt;30€)</th><th>Coste (≥30€)</th></tr></thead>
+  <tbody>
+    <tr><td>España, Portugal</td><td>2-4 días laborables</td><td>€3.99</td><td>Gratis</td></tr>
+    <tr><td>Francia, Alemania, Italia</td><td>3-6 días laborables</td><td>€4.99</td><td>Gratis</td></tr>
+    <tr><td>Bélgica, Países Bajos, Austria, Suecia, Dinamarca, Suiza, Liechtenstein</td><td>4-8 días laborables</td><td>€5.99</td><td>Gratis</td></tr>
+  </tbody>
 </table>
+<p style="font-size:0.85rem;color:#888">Los plazos son estimados en días laborables. PataHogar no se responsabiliza de retrasos causados por el transportista o por causas de fuerza mayor.</p>
+</div>
 
-<h2>5. Devoluciones (30 días)</h2>
-<p>Tienes <strong>30 días naturales</strong> desde la recepción para devolver cualquier producto en perfectas condiciones. Los gastos de devolución corren a cargo del comprador salvo producto defectuoso. El reembolso se procesa en 3-5 días hábiles.</p>
+<div class="card">
+<h2>5. Derecho de Desistimiento — 14 Días (Directiva UE 2011/83/UE)</h2>
+<div class="highlight-box">
+  <strong>Tienes derecho a desistir del contrato en un plazo de 14 días naturales</strong> desde la recepción del producto, sin necesidad de justificación y sin penalización alguna, de acuerdo con la Directiva Europea 2011/83/UE de derechos de los consumidores y el Real Decreto Legislativo 1/2007.
+</div>
+<h3>Procedimiento de desistimiento</h3>
+<ol class="steps">
+  <li>Comunica tu decisión de desistimiento enviando un email a <a href="mailto:info@patahogar.com"><strong>info@patahogar.com</strong></a> dentro del plazo de 14 días indicando: nombre completo, número de pedido y "Ejercicio de derecho de desistimiento".</li>
+  <li>Recibirás instrucciones de devolución en 24h laborables.</li>
+  <li>Devuelve el producto en su estado original en un plazo máximo de <strong>14 días</strong> desde la comunicación de desistimiento.</li>
+  <li>PataHogar reembolsará el importe completo del pedido (incluidos los gastos de envío originales) en un plazo máximo de <strong>14 días</strong> desde que recibamos el artículo.</li>
+</ol>
+<p style="margin-top:10px">Los gastos de devolución corren a cargo del consumidor, salvo que el artículo sea defectuoso o incorrecto.</p>
+</div>
 
-<h2>6. Garantía</h2>
-<p>Todos nuestros productos cuentan con <strong>2 años de garantía legal</strong> conforme a la Directiva UE 2019/771.</p>
+<div class="card">
+<h2>6. Política de Devoluciones (30 días)</h2>
+<p>Adicionalmente al plazo legal, PataHogar ofrece <strong>30 días naturales</strong> desde la recepción para solicitar la devolución de cualquier artículo que no sea de tu satisfacción. El procedimiento es el mismo que para el desistimiento. Consulta la <a href="/shipping">página de envíos</a> para más detalles.</p>
+</div>
 
-<h2>7. Resolución de Conflictos</h2>
-<p>Para cualquier reclamación: <a href="mailto:info@patahogar.com">info@patahogar.com</a>. En caso de disputa, puedes usar la <a href="https://ec.europa.eu/consumers/odr" target="_blank">plataforma ODR de la UE</a>.</p>
+<div class="card">
+<h2>7. Garantía Legal (Directiva UE 2019/771)</h2>
+<p>Todos los productos cuentan con <strong>2 años de garantía legal</strong> conforme a la Directiva UE 2019/771 sobre contratos de compraventa de bienes. En caso de producto defectuoso dentro del plazo de garantía, PataHogar procederá a la reparación, sustitución, reducción del precio o resolución del contrato según corresponda.</p>
+</div>
 
-<h2>8. Legislación Aplicable</h2>
-<p>Estos términos se rigen por la legislación española y el Derecho de la Unión Europea (Directiva 2011/83/UE sobre derechos de los consumidores).</p>
+<div class="card">
+<h2>8. Limitación de Responsabilidad</h2>
+<p>PataHogar actúa como comerciante intermediario bajo el modelo de dropshipping. En este sentido:</p>
+<ul>
+  <li>PataHogar <strong>no será responsable</strong> de daños indirectos, pérdidas de beneficios o daños consecuentes que no sean atribuibles a su actuación directa.</li>
+  <li>La responsabilidad máxima de PataHogar ante el consumidor estará limitada al <strong>importe del pedido afectado</strong>.</li>
+  <li>Las especificaciones técnicas de los productos provienen de BigBuy. PataHogar realiza todos los esfuerzos razonables para mantener la información actualizada, pero no garantiza la exactitud absoluta de las descripciones.</li>
+  <li>Los plazos de entrega son estimaciones basadas en el rendimiento histórico del transportista y pueden variar.</li>
+</ul>
+</div>
 
-<footer>PataHogar &copy; 2026 | <a href="/privacy">Política de Privacidad</a> | <a href="https://patahogar.com">Tienda</a></footer>
-</body></html>"""
+<div class="card">
+<h2>9. Fuerza Mayor</h2>
+<p>PataHogar no será responsable por incumplimientos causados por <strong>circunstancias de fuerza mayor</strong>, incluyendo pero no limitado a: catástrofes naturales, pandemias, huelgas de transportistas, fallos en infraestructuras de terceros, conflictos armados, restricciones gubernamentales o cualquier otro evento imprevisible e irresistible fuera del control razonable de PataHogar. En estos casos, PataHogar informará al cliente en la mayor brevedad posible y acordará una solución apropiada.</p>
+</div>
+
+<div class="card">
+<h2>10. Propiedad Intelectual</h2>
+<p>Todos los contenidos de PataHogar — incluyendo textos, imágenes, logotipos, diseño gráfico, código fuente y marca — son propiedad de PataHogar o se usan bajo licencia. Queda <strong>prohibida su reproducción, distribución o uso comercial</strong> sin autorización expresa y por escrito. Las imágenes de productos son propiedad de BigBuy o de sus respectivos fabricantes.</p>
+</div>
+
+<div class="card">
+<h2>11. Derecho a Denegar el Servicio</h2>
+<p>PataHogar se reserva el derecho a <strong>rechazar o cancelar pedidos</strong> en los siguientes supuestos:</p>
+<ul>
+  <li>Indicios de uso fraudulento o abuso del sistema de devoluciones</li>
+  <li>Dirección de entrega no válida o no verificable</li>
+  <li>Incumplimiento previo demostrado de los presentes Términos</li>
+  <li>Errores manifiestos de precio o disponibilidad en el momento del pedido</li>
+</ul>
+<p>En caso de cancelación, se procederá al reembolso íntegro del importe abonado.</p>
+</div>
+
+<div class="card">
+<h2>12. Modificación de estos Términos</h2>
+<p>PataHogar podrá modificar los presentes Términos y Condiciones para adaptarlos a cambios legislativos o en sus servicios. Las modificaciones serán comunicadas con al menos <strong>15 días de antelación</strong> mediante aviso en la web o por email a los usuarios registrados. Los cambios no afectarán a pedidos en curso. El uso continuado del servicio tras la entrada en vigor de los nuevos términos implica su aceptación.</p>
+</div>
+
+<div class="card">
+<h2>13. Resolución de Conflictos y Legislación Aplicable</h2>
+<p>Para cualquier reclamación o consulta: <a href="mailto:info@patahogar.com"><strong>info@patahogar.com</strong></a>. Intentaremos resolver cualquier disputa de forma amistosa en un plazo de 30 días.</p>
+<p style="margin-top:10px">En caso de disputa no resuelta, el consumidor puede acceder a la <strong>Plataforma de Resolución de Litigios en Línea (ODR)</strong> de la Comisión Europea: <a href="https://ec.europa.eu/consumers/odr" target="_blank">ec.europa.eu/consumers/odr</a></p>
+<p style="margin-top:10px">Los presentes Términos se rigen por la <strong>legislación española</strong> y el Derecho de la Unión Europea, en particular la Directiva 2011/83/UE y el Real Decreto Legislativo 1/2007. Para los litigios no solucionados en vía amistosa, serán competentes los Juzgados y Tribunales del domicilio del consumidor.</p>
+</div>
+</div>
+{footer}
+{scripts}
+</body>
+</html>"""
     return HTMLResponse(content=html)
 
 
