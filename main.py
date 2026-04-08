@@ -1105,6 +1105,19 @@ async def set_default_budget(budget: float = Query(10.0)):
     marketing_manager.default_daily_budget = budget
     return {"status": "ok", "new_default_budget": budget, "message": f"الإعلانات الجديدة ستكون بميزانية €{budget}/يوم"}
 
+@app.get("/api/marketing/clear-low-margin-ads")
+async def clear_low_margin_ads(min_profit: float = Query(10.0)):
+    """
+    مسح كل الإعلانات المعلقة بربح أقل من الحد الأدنى.
+    GET /api/marketing/clear-low-margin-ads?min_profit=10
+    """
+    return await marketing_manager.clear_low_margin_pending_ads(min_profit)
+
+@app.get("/api/marketing/reset-proposed")
+async def reset_proposed():
+    """مسح سجل المنتجات المقترحة — يسمح باقتراحها مجدداً."""
+    return await marketing_manager.reset_proposed_tracker()
+
 @app.get("/api/marketing/test-tiktok")
 async def test_tiktok():
     """اختبار اتصال TikTok Ads API."""
@@ -1545,6 +1558,38 @@ async def refresh_tracking():
     """Check tracking for all confirmed orders — run manually if needed."""
     return await order_manager.refresh_all_tracking()
 
+@app.get("/api/fix-all")
+async def fix_all():
+    """
+    🚀 أداة إصلاح شاملة — تشغيل بخطوة واحدة:
+    1. مسح الإعلانات المعلقة ذات الربح المنخفض
+    2. مسح سجل المقترحات القديمة
+    3. تشغيل إثراء الأسماء والأوصاف
+    4. إطلاق التسويق اليومي لاقتراحات جديدة
+    """
+    results = {}
+
+    # 1. Clear low-margin pending ads
+    results["clear_ads"] = await marketing_manager.clear_low_margin_pending_ads(min_profit=10.0)
+
+    # 2. Reset proposed tracker
+    results["reset_proposed"] = await marketing_manager.reset_proposed_tracker()
+
+    # 3. Start name enrichment
+    results["enrichment"] = await product_manager.run_re_enrich_descriptions()
+
+    # 4. Launch daily marketing with fresh proposals
+    top_products = await product_manager.get_current_products()
+    research_results = await research_manager.get_research_status()
+    asyncio.create_task(marketing_manager.run_daily_marketing(top_products, research_results))
+    results["marketing"] = "started — check /api/marketing/status in 2 minutes"
+
+    return {
+        "status": "✅ Fix-all started",
+        "steps": results,
+        "next": "Check /api/marketing/status in 2 min for new high-quality ad proposals"
+    }
+
 @app.get("/api/customers/messages")
 async def customer_messages():
     return {"messages": await customer_service.get_pending_messages()}
@@ -1668,15 +1713,31 @@ async def process_chat_message(message):
         return "يمكنني مساعدتك: منتجات | صور | كتالوج | إعلان | طلب | تقرير | أمان"
 
 async def get_all_stats():
-    s = product_manager.get_enrichment_status()
+    s  = product_manager.get_enrichment_status()
+    os_ = order_manager.get_order_stats()
+    mk = await marketing_manager.get_campaigns_status()
     return {
         "products": {
-            "total": s["total_products"],
-            "with_images": s["with_images"],
-            "with_names": s["with_names"],
-            "enrichment_pct": s["progress_pct"]
+            "total":          s["total_products"],
+            "with_images":    s["with_images"],
+            "with_names":     s["with_names"],
+            "needs_names":    s.get("needs_enrichment", 0),
+            "images_pct":     s.get("images_pct", 0),
+            "names_pct":      s.get("names_pct", 0),
+            "enrichment_pct": s["progress_pct"],
         },
-        "orders": {"total": len(order_manager.orders)},
+        "orders": {
+            "total":    os_.get("total_orders", 0),
+            "revenue":  os_.get("total_revenue", 0),
+            "profit":   os_.get("total_profit", 0),
+            "shipped":  os_.get("shipped", 0),
+        },
+        "marketing": {
+            "active_ads":      mk.get("active_ads", 0),
+            "pending_approval": mk.get("pending_approval", 0),
+            "meta_ok":         mk.get("meta_configured", False),
+            "tiktok_ok":       mk.get("tiktok_configured", False),
+        },
         "security": {"status": "online"}
     }
 

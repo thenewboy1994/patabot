@@ -535,6 +535,8 @@ class ProductManager:
     # ─── Formatting ───
 
     def _fmt(self, p):
+        cat_id = str(p.get("category", ""))
+        cat_name = self.category_names.get(cat_id, "") or cat_id
         return {
             "id": p["id"],
             "sku": p.get("sku", ""),
@@ -548,7 +550,9 @@ class ProductManager:
             "images": p.get("images", []),
             "descriptions": p.get("descriptions", {}),
             "enriched": p.get("has_images", False),
-            "category": p.get("category", ""),
+            "category": cat_name,
+            "category_id": cat_id,
+            "wholesale_price": p.get("wholesale_price", 0),
         }
 
     # ─── Standard Endpoints ───
@@ -589,12 +593,19 @@ class ProductManager:
         with_images = sum(1 for p in self.products_cache if p.get("has_images"))
         with_names = sum(1 for p in self.products_cache if p.get("has_names"))
         multilingual = sum(1 for p in self.products_cache if len(p.get("descriptions", {})) > 1)
+        # Progress = average of images% and names% — both matter for store quality
+        img_pct  = round(with_images / total * 100) if total > 0 else 0
+        name_pct = round(with_names  / total * 100) if total > 0 else 0
+        overall  = round((img_pct + name_pct) / 2)
         return {
             "total_products": total,
             "with_images": with_images,
             "with_names": with_names,
             "multilingual_descriptions": multilingual,
-            "progress_pct": round((with_images / total * 100) if total > 0 else 0),
+            "images_pct": img_pct,
+            "names_pct": name_pct,
+            "progress_pct": overall,
+            "needs_enrichment": total - with_names,
             "running": self.enrichment_running,
             "last_fetch": self.last_fetch_time
         }

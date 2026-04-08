@@ -201,9 +201,26 @@ class MarketingManager:
         logger.info(f"✅ Daily marketing done — {len(proposals)} proposals sent to Mohamed")
         return {"status": "done", "proposals": len(proposals)}
 
+    # Minimum profit required to run a paid ad (€5/day spend → need €10+ profit per sale to be profitable)
+    MIN_AD_PROFIT = 10.0
+    # Sweet spot price range for best conversion rates on Meta/TikTok
+    SWEET_SPOT_MIN = 15.0
+    SWEET_SPOT_MAX = 70.0
+    # Pets & home keywords → bonus score (our core niche)
+    NICHE_KEYWORDS = [
+        "perro", "gato", "mascota", "dog", "cat", "pet", "hund", "chat", "kat",
+        "cama", "collar", "correa", "comedero", "bebedero", "juguete", "arnés",
+        "hogar", "home", "cocina", "baño", "jardín", "organiz", "led", "lámpara",
+        "difusor", "humidif", "purificador", "soporte", "almacen",
+        "bed", "feeder", "leash", "toy", "harness", "fountain", "grooming",
+    ]
+
     def _select_ad_candidates(self, products: List[Dict], research: Dict) -> List[Dict]:
-        """اختيار المنتجات الأفضل للإعلان — مع تجنب التكرار."""
-        # Build set of recently proposed product IDs (last 7 days)
+        """
+        Selecciona los mejores productos para anunciar.
+        Filtros obligatorios: imagen + profit >= €10
+        Scoring: profit × 10 + niche bonus + sweet spot bonus + research keywords
+        """
         recently_proposed = set()
         for pid, ts in self.proposed_tracker.items():
             try:
@@ -218,22 +235,46 @@ class MarketingManager:
             winning_keywords = []
 
         scored = []
-        for p in products[:200]:
+        skipped_profit = 0
+        for p in products[:500]:
             if not p.get("image_url"):
                 continue
             if str(p.get("id", "")) in recently_proposed:
-                continue  # already proposed this week → skip
+                continue
+            # Hard filter: minimum profit
+            if p.get("profit", 0) < self.MIN_AD_PROFIT:
+                skipped_profit += 1
+                continue
 
             score = p.get("profit", 0) * 10
             name_lower = p.get("name", "").lower()
+            desc_lower = p.get("description", "").lower()
+            combined = name_lower + " " + desc_lower
+
+            # Niche bonus: pets & home = core audience
+            for kw in self.NICHE_KEYWORDS:
+                if kw in combined:
+                    score += 30
+                    break
+
+            # Sweet spot price bonus (€15-70 converts best with Meta ads)
+            price = p.get("selling_price", 0)
+            if self.SWEET_SPOT_MIN <= price <= self.SWEET_SPOT_MAX:
+                score += 40
+
+            # Research keyword match bonus
             for kw in winning_keywords:
-                if str(kw).lower() in name_lower:
+                if str(kw).lower() in combined:
                     score += 20
+
             score += p.get("margin_pct", 30)
             scored.append({"product": p, "score": score})
 
         scored.sort(key=lambda x: x["score"], reverse=True)
-        logger.info(f"Candidates: {len(scored)} new products (skipped {len(recently_proposed)} recently proposed)")
+        logger.info(
+            f"Ad candidates: {len(scored)} eligible (skipped {skipped_profit} low-profit, "
+            f"{len(recently_proposed)} recently proposed)"
+        )
         return [s["product"] for s in scored[:5]]
 
     async def _create_ad_proposal(self, product: Dict, research: Dict) -> Optional[Dict]:
@@ -458,6 +499,27 @@ class MarketingManager:
         logger.info(f"Ad {ad_id} rejected by Mohamed")
         return {"success": True, "status": "rejected"}
 
+    async def clear_low_margin_pending_ads(self, min_profit: float = 10.0) -> Dict:
+        """مسح كل الإعلانات المعلقة ذات الربح أقل من الحد الأدنى."""
+        before = len(self.pending_ads)
+        self.pending_ads = [a for a in self.pending_ads if a.get("profit", 0) >= min_profit]
+        removed = before - len(self.pending_ads)
+        self._save_ads()
+        logger.info(f"Cleared {removed} low-margin pending ads (threshold: €{min_profit})")
+        return {
+            "removed": removed,
+            "remaining": len(self.pending_ads),
+            "threshold": min_profit,
+            "message": f"تم حذف {removed} إعلان بربح أقل من €{min_profit}"
+        }
+
+    async def reset_proposed_tracker(self) -> Dict:
+        """مسح سجل المنتجات المقترحة — يتيح اقتراحها مجدداً."""
+        count = len(self.proposed_tracker)
+        self.proposed_tracker = {}
+        self._save_ads()
+        return {"cleared": count, "message": "سجل المقترحات مُسح — يمكن اقتراح نفس المنتجات مجدداً"}
+
     async def _meta_create_campaign_cbo(self, ad: Dict, countries: List[str]) -> Optional[str]:
         """
         إنشاء حملة بسيطة على Meta (بدون CBO — الميزانية على مستوى كل adset).
@@ -541,10 +603,11 @@ class MarketingManager:
             return None
 
         product_id  = ad.get("product_id", "")
+        # Use PataBot /product/{id} — full page with Stripe checkout, pixel tracking, upsell
         product_url = (
-            f"https://patahogar.com/product.html?id={product_id}"
+            f"https://patabot-production.up.railway.app/product/{product_id}"
             if product_id
-            else "https://patahogar.com/catalog.html"
+            else "https://patabot-production.up.railway.app/cart"
         )
 
         creative_body = {
