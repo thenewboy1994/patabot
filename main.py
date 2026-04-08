@@ -12,7 +12,7 @@ import asyncio
 import logging
 from datetime import datetime
 from fastapi import FastAPI, Request, Query
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -1870,6 +1870,140 @@ async def test_tiktok():
             params={"advertiser_ids": f'["{adv_id}"]', "fields": '["name","status","currency"]'}
         )
     return {"configured": True, "status": r.status_code, "response": r.json()}
+
+# ════════════════════════════════════════════════════════
+# TIKTOK OAUTH — Get Access Token via OAuth 2.0
+# ════════════════════════════════════════════════════════
+
+@app.get("/tiktok/auth", response_class=HTMLResponse)
+async def tiktok_auth_start():
+    """
+    Step 1: Redirect Mohamed to TikTok authorization page.
+    Requires TIKTOK_CLIENT_KEY set in Railway.
+    """
+    client_key = os.getenv("TIKTOK_CLIENT_KEY", "")
+    if not client_key:
+        return HTMLResponse("""
+        <html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:0 auto">
+        <h2 style="color:#d32f2f">❌ TIKTOK_CLIENT_KEY no configurado</h2>
+        <p>Añade <code>TIKTOK_CLIENT_KEY</code> en Railway → Variables y vuelve a intentarlo.</p>
+        </body></html>
+        """, status_code=400)
+
+    redirect_uri = "https://patabot-production.up.railway.app/tiktok/callback"
+    auth_url = (
+        f"https://business-api.tiktok.com/portal/auth"
+        f"?app_id={client_key}"
+        f"&state=patabot_oauth"
+        f"&redirect_uri={redirect_uri}"
+    )
+    return HTMLResponse(f"""
+    <html><head><meta charset="utf-8">
+    <style>body{{font-family:sans-serif;padding:40px;max-width:600px;margin:0 auto}}
+    .btn{{display:inline-block;padding:14px 28px;background:#00f2ea;color:#000;
+    font-weight:700;border-radius:8px;text-decoration:none;font-size:18px;margin-top:20px}}
+    .btn:hover{{background:#00c4bc}}</style></head>
+    <body>
+    <h2>🎵 Conectar TikTok Ads</h2>
+    <p>Haz clic en el botón para autorizar PataBot a crear anuncios en tu cuenta de TikTok Business.</p>
+    <p><b>App:</b> patabot &nbsp;|&nbsp; <b>Cuenta:</b> Business Center {os.getenv('TIKTOK_ADVERTISER_ID','')}</p>
+    <a href="{auth_url}" class="btn">▶ Autorizar en TikTok</a>
+    <p style="color:#666;margin-top:20px;font-size:13px">
+    Se abrirá la página oficial de TikTok Business. Inicia sesión y acepta los permisos.
+    Serás redirigido de vuelta automáticamente.</p>
+    </body></html>
+    """)
+
+@app.get("/tiktok/callback")
+async def tiktok_auth_callback(request: Request, response_class=HTMLResponse):
+    """
+    Step 2: TikTok redirects here with auth_code.
+    Exchange auth_code → access_token and display it.
+    """
+    params = dict(request.query_params)
+    auth_code = params.get("auth_code") or params.get("code", "")
+    state = params.get("state", "")
+    error = params.get("error", "")
+
+    if error:
+        return HTMLResponse(f"""
+        <html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:0 auto">
+        <h2 style="color:#d32f2f">❌ Autorización rechazada</h2>
+        <p>TikTok devolvió error: <code>{error}</code></p>
+        <p>Inténtalo de nuevo en <a href="/tiktok/auth">/tiktok/auth</a></p>
+        </body></html>
+        """, status_code=400)
+
+    if not auth_code:
+        return HTMLResponse(f"""
+        <html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:0 auto">
+        <h2 style="color:#d32f2f">❌ No se recibió auth_code</h2>
+        <p>Parámetros recibidos: <code>{params}</code></p>
+        </body></html>
+        """, status_code=400)
+
+    client_key = os.getenv("TIKTOK_CLIENT_KEY", "")
+    client_secret = os.getenv("TIKTOK_CLIENT_SECRET", "")
+
+    if not client_key or not client_secret:
+        return HTMLResponse("""
+        <html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:0 auto">
+        <h2 style="color:#d32f2f">❌ Faltan TIKTOK_CLIENT_KEY o TIKTOK_CLIENT_SECRET</h2>
+        <p>Añádelos en Railway → Variables.</p>
+        </body></html>
+        """, status_code=400)
+
+    # Exchange auth_code for access_token
+    import httpx
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(
+            "https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/",
+            json={
+                "app_id": client_key,
+                "secret": client_secret,
+                "auth_code": auth_code,
+            }
+        )
+
+    data = r.json()
+    logger.info(f"TikTok OAuth response: {data}")
+
+    if data.get("code") != 0:
+        return HTMLResponse(f"""
+        <html><body style="font-family:sans-serif;padding:40px;max-width:600px;margin:0 auto">
+        <h2 style="color:#d32f2f">❌ Error al obtener access token</h2>
+        <pre style="background:#f5f5f5;padding:16px;border-radius:8px">{json.dumps(data, indent=2)}</pre>
+        </body></html>
+        """, status_code=400)
+
+    token_data = data.get("data", {})
+    access_token = token_data.get("access_token", "")
+    advertiser_ids = token_data.get("advertiser_ids", [])
+
+    return HTMLResponse(f"""
+    <html><head><meta charset="utf-8">
+    <style>body{{font-family:sans-serif;padding:40px;max-width:700px;margin:0 auto}}
+    .box{{background:#e8f5e9;border:2px solid #2e7d32;border-radius:12px;padding:24px;margin:20px 0}}
+    .token{{background:#1a1a1a;color:#00ff88;padding:16px;border-radius:8px;
+    font-family:monospace;font-size:13px;word-break:break-all;margin:12px 0}}
+    .step{{background:#fff3e0;border-left:4px solid #f57c00;padding:12px 16px;margin:8px 0;border-radius:4px}}
+    </style></head>
+    <body>
+    <h2 style="color:#2e7d32">✅ TikTok autorizado correctamente</h2>
+    <div class="box">
+      <b>🔑 Access Token obtenido:</b>
+      <div class="token">{access_token}</div>
+      <b>📋 Advertiser IDs vinculados:</b> {', '.join(str(i) for i in advertiser_ids)}
+    </div>
+    <h3>Próximos pasos — añadir en Railway:</h3>
+    <div class="step">1. Ve a <b>Railway → tu proyecto → Variables</b></div>
+    <div class="step">2. Añade: <code>TIKTOK_ACCESS_TOKEN</code> = <b>{access_token}</b></div>
+    <div class="step">3. Añade: <code>TIKTOK_ADVERTISER_ID</code> = <b>7626428696811274258</b></div>
+    <div class="step">4. Railway redespliega automáticamente (~1 min)</div>
+    <div class="step">5. Verifica en: <a href="/api/marketing/test-tiktok">/api/marketing/test-tiktok</a></div>
+    <p style="color:#666;margin-top:20px">⚠️ Guarda este token de forma segura. Es válido hasta que lo revocas desde TikTok Business.</p>
+    </body></html>
+    """)
 
 @app.post("/api/marketing/propose-ad")
 async def propose_ad(request: Request):
