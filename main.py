@@ -733,6 +733,136 @@ async def product_page(product_id: int):
     return HTMLResponse(content=html)
 
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page():
+    """Política de Privacidad — GDPR compliant"""
+    html = """<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Política de Privacidad | PataHogar</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px 24px;color:#333;line-height:1.7}
+    nav{background:#1a5e35;padding:12px 20px;border-radius:8px;margin-bottom:24px}
+    nav a{color:white;text-decoration:none;font-weight:bold}
+    h1{color:#1a5e35;border-bottom:3px solid #ff6b35;padding-bottom:10px}
+    h2{color:#1a5e35;margin-top:28px}
+    .date{background:#f0f9f4;padding:8px 14px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:20px}
+    footer{margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#888;font-size:.85rem}
+  </style>
+</head>
+<body>
+<nav><a href="https://patahogar.com">🐾 PataHogar — Volver a la tienda</a></nav>
+<h1>Política de Privacidad</h1>
+<p class="date">Última actualización: Abril 2026 | Conforme al RGPD (UE) 2016/679</p>
+
+<h2>1. Responsable del Tratamiento</h2>
+<p><strong>PataHogar</strong> — Tienda online de mascotas y hogar<br>
+Propietario: Mohamed El Mansouri<br>
+Valencia, España<br>
+Contacto: <a href="mailto:info@patahogar.com">info@patahogar.com</a></p>
+
+<h2>2. Datos que Recopilamos</h2>
+<p>Al realizar una compra recopilamos: nombre completo, dirección de envío, correo electrónico y teléfono. El pago es procesado por <strong>Stripe</strong> — no almacenamos datos de tarjeta.</p>
+
+<h2>3. Finalidad del Tratamiento</h2>
+<ul>
+  <li>Procesar y enviar tu pedido a través de nuestro proveedor logístico</li>
+  <li>Enviarte confirmación de compra y número de seguimiento</li>
+  <li>Atender consultas y reclamaciones</li>
+  <li>Mejorar nuestros servicios y experiencia de compra</li>
+</ul>
+
+<h2>4. Base Legal</h2>
+<p>El tratamiento se basa en la <strong>ejecución del contrato de compraventa</strong> (Art. 6.1.b RGPD) y el <strong>interés legítimo</strong> para el funcionamiento del servicio.</p>
+
+<h2>5. Conservación de Datos</h2>
+<p>Los datos de pedidos se conservan <strong>5 años</strong> para cumplir con obligaciones fiscales. Los datos de marketing se eliminan si ejerces tu derecho de oposición.</p>
+
+<h2>6. Tus Derechos (RGPD)</h2>
+<p>Tienes derecho a: <strong>Acceso, Rectificación, Supresión, Portabilidad, Limitación y Oposición</strong>. Ejércelos en: <a href="mailto:info@patahogar.com">info@patahogar.com</a><br>
+También puedes reclamar ante la <strong>Agencia Española de Protección de Datos</strong> (aepd.es).</p>
+
+<h2>7. Cookies</h2>
+<p>Usamos cookies técnicas necesarias para el carrito de compra y cookies analíticas de Google Analytics. Puedes gestionarlas desde la configuración de tu navegador.</p>
+
+<h2>8. Transferencias Internacionales</h2>
+<p>Stripe (EE.UU.) cumple con el Marco de Privacidad UE-EE.UU. BigBuy procesa pedidos desde la UE.</p>
+
+<h2>9. Pixel de Meta (Facebook)</h2>
+<p>Usamos el Pixel de Meta para medir la eficacia de nuestros anuncios y mostrar publicidad relevante. Puedes optar por no participar en <a href="https://www.facebook.com/adpreferences" target="_blank">Preferencias de anuncios de Meta</a>.</p>
+
+<footer>PataHogar &copy; 2026 | <a href="/terms">Términos y Condiciones</a> | <a href="https://patahogar.com">Tienda</a></footer>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page():
+    """Términos y Condiciones de compra"""
+    html = """<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Términos y Condiciones | PataHogar</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px 24px;color:#333;line-height:1.7}
+    nav{background:#1a5e35;padding:12px 20px;border-radius:8px;margin-bottom:24px}
+    nav a{color:white;text-decoration:none;font-weight:bold}
+    h1{color:#1a5e35;border-bottom:3px solid #ff6b35;padding-bottom:10px}
+    h2{color:#1a5e35;margin-top:28px}
+    .date{background:#f0f9f4;padding:8px 14px;border-radius:6px;font-size:.9rem;color:#555;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;margin:12px 0}
+    td,th{padding:10px;border:1px solid #eee;text-align:left}
+    th{background:#f0f9f4;color:#1a5e35}
+    footer{margin-top:40px;padding-top:20px;border-top:1px solid #eee;text-align:center;color:#888;font-size:.85rem}
+  </style>
+</head>
+<body>
+<nav><a href="https://patahogar.com">🐾 PataHogar — Volver a la tienda</a></nav>
+<h1>Términos y Condiciones</h1>
+<p class="date">Última actualización: Abril 2026 | PataHogar, Valencia (España)</p>
+
+<h2>1. Información General</h2>
+<p>PataHogar es una tienda online de productos para mascotas y hogar operada por Mohamed El Mansouri con sede en Valencia, España. Trabajamos bajo el modelo de <strong>dropshipping</strong> con proveedor europeo certificado (BigBuy, Valencia).</p>
+
+<h2>2. Proceso de Compra</h2>
+<ol>
+  <li>Selecciona el producto y haz clic en "Comprar ahora"</li>
+  <li>Revisa tu carrito y confirma la cantidad</li>
+  <li>Introduce tus datos de envío y pago en la página segura de <strong>Stripe</strong></li>
+  <li>Recibirás confirmación por email en menos de 1 hora</li>
+  <li>Tu pedido se envía desde nuestros almacenes europeos en 24-48h</li>
+</ol>
+
+<h2>3. Precios y Pago</h2>
+<p>Todos los precios incluyen IVA. Aceptamos: <strong>Visa, Mastercard, American Express</strong> y otras tarjetas procesadas por Stripe (PCI DSS Level 1).</p>
+
+<h2>4. Envíos</h2>
+<table>
+  <tr><th>Destino</th><th>Plazo</th><th>Coste</th></tr>
+  <tr><td>España, Portugal</td><td>2-4 días laborables</td><td>Gratis +30€ / €3.99 resto</td></tr>
+  <tr><td>Francia, Alemania, Italia</td><td>3-6 días laborables</td><td>Gratis +30€ / €4.99 resto</td></tr>
+  <tr><td>Resto de Europa</td><td>4-8 días laborables</td><td>Gratis +30€ / €5.99 resto</td></tr>
+</table>
+
+<h2>5. Devoluciones (30 días)</h2>
+<p>Tienes <strong>30 días naturales</strong> desde la recepción para devolver cualquier producto en perfectas condiciones. Los gastos de devolución corren a cargo del comprador salvo producto defectuoso. El reembolso se procesa en 3-5 días hábiles.</p>
+
+<h2>6. Garantía</h2>
+<p>Todos nuestros productos cuentan con <strong>2 años de garantía legal</strong> conforme a la Directiva UE 2019/771.</p>
+
+<h2>7. Resolución de Conflictos</h2>
+<p>Para cualquier reclamación: <a href="mailto:info@patahogar.com">info@patahogar.com</a>. En caso de disputa, puedes usar la <a href="https://ec.europa.eu/consumers/odr" target="_blank">plataforma ODR de la UE</a>.</p>
+
+<h2>8. Legislación Aplicable</h2>
+<p>Estos términos se rigen por la legislación española y el Derecho de la Unión Europea (Directiva 2011/83/UE sobre derechos de los consumidores).</p>
+
+<footer>PataHogar &copy; 2026 | <a href="/privacy">Política de Privacidad</a> | <a href="https://patahogar.com">Tienda</a></footer>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
 @app.get("/api/marketing/ad-details/{ad_id}")
 async def ad_details(ad_id: str):
     """تفاصيل كاملة عن إعلان — للتشخيص."""
