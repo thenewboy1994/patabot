@@ -46,7 +46,7 @@ RESEARCH_KEYWORDS = [
 ]
 
 # ── Facebook Ad Library API ──
-FB_AD_LIBRARY_URL = "https://graph.facebook.com/v19.0/ads_archive"
+FB_AD_LIBRARY_URL = "https://graph.facebook.com/v21.0/ads_archive"
 FACEBOOK_TOKEN = os.getenv("FACEBOOK_ACCESS_TOKEN", "")
 
 # ── TikTok Creative Center (no auth needed) ──

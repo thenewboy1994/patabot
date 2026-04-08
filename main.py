@@ -284,7 +284,7 @@ async def test_meta_adset():
 
         # Step 1: create PAUSED campaign (OUTCOME_SALES)
         r = await client.post(
-            f"https://graph.facebook.com/v19.0/{account}/campaigns",
+            f"https://graph.facebook.com/v21.0/{account}/campaigns",
             params={"access_token": token},
             json={
                 "name": "PataBot ADSET-TEST — delete me",
@@ -316,7 +316,7 @@ async def test_meta_adset():
             "dsa_payor": "PataHogar",
         }
         r2 = await client.post(
-            f"https://graph.facebook.com/v19.0/{account}/adsets",
+            f"https://graph.facebook.com/v21.0/{account}/adsets",
             params={"access_token": token},
             json=adset_payload_with_pixel
         )
@@ -325,7 +325,7 @@ async def test_meta_adset():
 
         # Cleanup: delete test campaign
         await client.delete(
-            f"https://graph.facebook.com/v19.0/{campaign_id}",
+            f"https://graph.facebook.com/v21.0/{campaign_id}",
             params={"access_token": token}
         )
         results["cleanup"] = f"Campaign {campaign_id} deleted"
@@ -349,21 +349,21 @@ async def test_meta():
 
         # 1. Check token validity
         r = await client.get(
-            "https://graph.facebook.com/v19.0/me",
+            "https://graph.facebook.com/v21.0/me",
             params={"access_token": token, "fields": "id,name"}
         )
         results["token_check"] = {"status": r.status_code, "response": r.json()}
 
         # 2. Check ad account
         r = await client.get(
-            f"https://graph.facebook.com/v19.0/{account}",
+            f"https://graph.facebook.com/v21.0/{account}",
             params={"access_token": token, "fields": "id,name,account_status,currency,timezone_name"}
         )
         results["ad_account"] = {"status": r.status_code, "response": r.json()}
 
         # 3. Try creating a PAUSED test campaign to see real error
         r = await client.post(
-            f"https://graph.facebook.com/v19.0/{account}/campaigns",
+            f"https://graph.facebook.com/v21.0/{account}/campaigns",
             params={"access_token": token},
             json={
                 "name": "PataBot TEST — delete me",
@@ -379,7 +379,7 @@ async def test_meta():
         if r.status_code == 200 and r.json().get("id"):
             cid = r.json()["id"]
             await client.delete(
-                f"https://graph.facebook.com/v19.0/{cid}",
+                f"https://graph.facebook.com/v21.0/{cid}",
                 params={"access_token": token}
             )
             results["campaign_test"]["note"] = f"Test campaign {cid} created and deleted"
@@ -586,6 +586,25 @@ async def product_page(product_id: int):
   <meta property="og:image" content="{image_url}">
   <meta property="og:description" content="🚀 Envío rápido a toda Europa | Devolución 30 días">
   <meta property="og:url" content="https://patahogar.com/product.html?id={product_id}">
+  <!-- Facebook Pixel -->
+  <script>
+    !function(f,b,e,v,n,t,s){{if(f.fbq)return;n=f.fbq=function(){{n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)}};if(!f._fbq)f._fbq=n;
+    n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}}(window,
+    document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '{os.getenv("META_PIXEL_ID", "")}');
+    fbq('track', 'PageView');
+    fbq('track', 'ViewContent', {{
+      content_ids: ['{product_id}'],
+      content_type: 'product',
+      content_name: {json.dumps(name)},
+      value: {price},
+      currency: 'EUR'
+    }});
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+    src="https://www.facebook.com/tr?id={os.getenv("META_PIXEL_ID", "")}&ev=PageView&noscript=1"/></noscript>
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333}}
@@ -707,6 +726,24 @@ async def product_page(product_id: int):
     var loading = document.getElementById('loading');
     btn.disabled = true;
     loading.style.display = 'block';
+    // Pixel: AddToCart + InitiateCheckout
+    if(typeof fbq !== 'undefined') {{
+      fbq('track', 'AddToCart', {{
+        content_ids: [String(productId)],
+        content_type: 'product',
+        content_name: name,
+        value: price * qty,
+        currency: 'EUR',
+        num_items: qty
+      }});
+      fbq('track', 'InitiateCheckout', {{
+        content_ids: [String(productId)],
+        content_type: 'product',
+        value: price * qty,
+        currency: 'EUR',
+        num_items: qty
+      }});
+    }}
     try {{
       var resp = await fetch('{checkout_url}', {{
         method: 'POST',
@@ -885,7 +922,7 @@ async def launch_test():
     account  = os.environ.get("META_AD_ACCOUNT_ID", "")
     pixel_id = os.environ.get("META_PIXEL_ID", "")
     page_id  = os.environ.get("META_PAGE_ID", "")
-    base     = "https://graph.facebook.com/v19.0"
+    base     = "https://graph.facebook.com/v21.0"
 
     if not token or not account:
         return {"error": "META credentials missing"}
@@ -1166,7 +1203,7 @@ async def process_chat_message(message):
         s = product_manager.get_enrichment_status()
         return f"الصور: {s['with_images']}/{s['total_products']}. الأسماء: {s['with_names']}/{s['total_products']}."
     elif any(w in ml for w in ['مرحبا', 'hello', 'hola']):
-        return "مرحباً محمد! أنا PataBot v1.4.0 جاهز. كيف أساعدك؟ 🐾"
+        return "مرحباً محمد! أنا PataBot v1.6.0 جاهز. كيف أساعدك؟ 🐾"
     elif any(w in ml for w in ['كتالوج', 'catalog', 'catálogo']):
         s = product_manager.get_enrichment_status()
         return f"الكتالوج: {s['total_products']} منتج. {s['with_images']} مع صور. → patahogar.com/catalog.html"
@@ -1182,7 +1219,7 @@ async def get_all_stats():
             "with_names": s["with_names"],
             "enrichment_pct": s["progress_pct"]
         },
-        "orders": {"total": len(product_manager.orders)},
+        "orders": {"total": len(order_manager.orders)},
         "security": {"status": "online"}
     }
 

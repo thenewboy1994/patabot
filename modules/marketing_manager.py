@@ -24,7 +24,7 @@ META_ACCESS_TOKEN   = os.getenv("META_ACCESS_TOKEN", "")
 META_AD_ACCOUNT_ID  = os.getenv("META_AD_ACCOUNT_ID", "")   # act_XXXXXXXXXX
 META_PAGE_ID        = os.getenv("META_PAGE_ID", "")
 META_PIXEL_ID       = os.getenv("META_PIXEL_ID", "")
-META_API_VERSION    = "v19.0"
+META_API_VERSION    = "v21.0"
 META_BASE           = f"https://graph.facebook.com/{META_API_VERSION}"
 
 # ── TikTok Ads ──
