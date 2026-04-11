@@ -730,6 +730,8 @@ async def product_page(product_id: int):
     stock_count  = (product_id % 7) + 3
     review_count = (product_id % 128) + 87
     rating_val   = "4.8" if product_id % 3 != 0 else "4.6"
+    # Pre-compute schema description (avoids nested f-string with same quote char — Python 3.11)
+    schema_desc  = desc_es or ("Compra " + name + " en PataHogar. Envio rapido a toda Europa.")
 
     # Build image gallery
     img_tags = ""
@@ -849,7 +851,7 @@ async def product_page(product_id: int):
     "@type": "Product",
     "name": {json.dumps(name)},
     "image": {json.dumps(images[:3] if images else ([image_url] if image_url else []))},
-    "description": {json.dumps(desc_es or f"Compra {name} en PataHogar. Envío rápido a toda Europa.")},
+    "description": {json.dumps(schema_desc)},
     "sku": {json.dumps(product.get("sku", str(product_id)))},
     "brand": {{"@type": "Brand", "name": "PataHogar"}},
     "offers": {{
@@ -1738,11 +1740,7 @@ async def search_page(q: str = Query("", alias="q")):
 
   {"" if not q else f'<div class="sr-grid">{results_html}</div>' if results_html and "no-results" not in results_html else results_html}
 
-  {"" if q else """<div class="empty-state">
-    <div class="ei">🐾</div>
-    <h2>¿Qué estás buscando?</h2>
-    <p>Escribe en el campo de arriba para encontrar productos para mascotas y hogar</p>
-  </div>"""}
+  {"" if q else '<div class="empty-state"><div class="ei">🐾</div><h2>¿Qué estás buscando?</h2><p>Escribe en el campo de arriba para encontrar productos para mascotas y hogar</p></div>'}
 </div>
 
 {footer}
