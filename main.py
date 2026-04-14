@@ -1113,6 +1113,7 @@ def _get_shared_footer() -> str:
     <a href="/faq" style="color:rgba(255,255,255,0.8);text-decoration:none;">FAQ</a> ·
     <a href="/shipping" style="color:rgba(255,255,255,0.8);text-decoration:none;">Envíos</a> ·
     <a href="/about" style="color:rgba(255,255,255,0.8);text-decoration:none;">Sobre Nosotros</a> ·
+    <a href="/returns" style="color:rgba(255,255,255,0.8);text-decoration:none;">Devoluciones</a> ·
     <a href="/privacy" style="color:rgba(255,255,255,0.8);text-decoration:none;">Privacidad</a> ·
     <a href="/terms" style="color:rgba(255,255,255,0.8);text-decoration:none;">Términos</a>
   </span>
@@ -2094,6 +2095,187 @@ async def terms_page():
 </div>
 {footer}
 {scripts}
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/returns", response_class=HTMLResponse)
+async def returns_page():
+    """Política de devoluciones — 14-day return policy (EU directive 2011/83/UE)"""
+    nav     = _get_nav("returns")
+    footer  = _get_shared_footer()
+    scripts = _get_shared_head_scripts()
+    html = """<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Política de Devoluciones | PataHogar</title>
+  <meta name="description" content="Política de devoluciones de PataHogar. 14 días de desistimiento + 30 días de garantía voluntaria. Devolución gratuita por correo.">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:#f8f9fa;color:#333;line-height:1.75}
+    .container{max-width:860px;margin:0 auto;padding:32px 20px}
+    h1{color:#1a5e35;font-size:1.9rem;margin-bottom:8px;border-bottom:3px solid #ff6b35;padding-bottom:10px}
+    .updated{color:#888;font-size:0.85rem;margin-bottom:28px}
+    h2{color:#1a5e35;font-size:1.05rem;margin:28px 0 8px;padding:8px 14px;background:#f0f9f4;border-left:4px solid #1a5e35;border-radius:0 6px 6px 0}
+    p{margin-bottom:12px;font-size:0.95rem}
+    ul{margin:8px 0 12px 20px;font-size:0.95rem}
+    ul li{margin-bottom:6px}
+    .highlight-box{background:#e8f5e9;border:1px solid #a5d6a7;border-radius:10px;padding:18px 20px;margin:20px 0}
+    .highlight-box h3{color:#2e7d32;font-size:1rem;margin-bottom:8px}
+    .warning-box{background:#fff3e0;border:1px solid #ffcc02;border-radius:10px;padding:18px 20px;margin:20px 0}
+    .warning-box h3{color:#e65100;font-size:1rem;margin-bottom:8px}
+    .steps{counter-reset:step}
+    .step{display:flex;gap:16px;margin-bottom:16px;align-items:flex-start}
+    .step-num{background:#1a5e35;color:white;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;font-size:0.95rem}
+    .step-body h4{font-size:0.95rem;font-weight:700;margin-bottom:4px}
+    .step-body p{margin:0;font-size:0.9rem;color:#555}
+    table{width:100%;border-collapse:collapse;margin:16px 0;font-size:0.9rem}
+    th{background:#1a5e35;color:white;padding:10px 14px;text-align:left}
+    td{padding:9px 14px;border-bottom:1px solid #e0e0e0}
+    tr:nth-child(even) td{background:#f5f5f5}
+    .badge-ok{background:#e8f5e9;color:#2e7d32;padding:3px 9px;border-radius:12px;font-size:0.8rem;font-weight:600}
+    .badge-no{background:#ffebee;color:#c62828;padding:3px 9px;border-radius:12px;font-size:0.8rem;font-weight:600}
+    a{color:#1a5e35}
+  </style>
+</head>
+<body>
+""" + nav + """
+<div class="container">
+
+  <h1>↩️ Política de Devoluciones</h1>
+  <p class="updated">Última actualización: 14 de abril de 2026 · PataHogar, Valencia, España</p>
+
+  <div class="highlight-box">
+    <h3>✅ Tu protección como consumidor europeo</h3>
+    <p>En PataHogar cumplimos con la <strong>Directiva Europea 2011/83/UE</strong> sobre derechos del consumidor. Tienes <strong>14 días naturales</strong> de derecho de desistimiento desde la recepción de tu pedido, sin necesidad de justificación. Además, ofrecemos voluntariamente una ventana ampliada de <strong>30 días</strong>.</p>
+  </div>
+
+  <h2>1. Derecho de Desistimiento (14 días — Legal)</h2>
+  <p>Tienes derecho a desistir del contrato en un plazo de <strong>14 días naturales</strong> a partir del día en que tú o un tercero (distinto al transportista) recibas el pedido, sin necesidad de indicar el motivo.</p>
+  <p>Para ejercer el derecho de desistimiento, debes notificarnos tu decisión antes de que expire el plazo mediante:</p>
+  <ul>
+    <li>📧 Email: <strong>info@patahogar.com</strong></li>
+    <li>📬 Carta postal: PataHogar, Valencia, España</li>
+    <li>📋 Formulario online (ver sección 4)</li>
+  </ul>
+
+  <h2>2. Política Ampliada Voluntaria (30 días)</h2>
+  <p>Adicionalmente al derecho legal, PataHogar ofrece voluntariamente <strong>30 días naturales</strong> desde la recepción para solicitar la devolución de cualquier producto, sin necesidad de justificación, siempre que se cumplan las condiciones indicadas.</p>
+
+  <h2>3. Condiciones para la Devolución</h2>
+  <table>
+    <tr><th>Condición</th><th>Estado</th></tr>
+    <tr><td>Producto en estado original (sin usar)</td><td><span class="badge-ok">Requerido</span></td></tr>
+    <tr><td>Embalaje original conservado</td><td><span class="badge-ok">Requerido</span></td></tr>
+    <tr><td>Todos los accesorios incluidos</td><td><span class="badge-ok">Requerido</span></td></tr>
+    <tr><td>Etiqueta/precinto intacto</td><td><span class="badge-ok">Requerido</span></td></tr>
+    <tr><td>Ticket o confirmación de compra</td><td><span class="badge-ok">Requerido</span></td></tr>
+    <tr><td>Producto dañado por uso indebido</td><td><span class="badge-no">No aceptado</span></td></tr>
+    <tr><td>Productos de higiene personal abiertos</td><td><span class="badge-no">No aceptado</span></td></tr>
+    <tr><td>Software/contenido digital descargado</td><td><span class="badge-no">No aceptado</span></td></tr>
+  </table>
+
+  <h2>4. Cómo Iniciar una Devolución</h2>
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Notifícanos</h4>
+      <p>Envía un email a <strong>info@patahogar.com</strong> con asunto "DEVOLUCIÓN — Nº Pedido XXXXX" indicando el motivo (opcional) y si prefieres reembolso o cambio.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Confirmación en 24h</h4>
+      <p>Recibirás un email de confirmación con las instrucciones de envío y la dirección de devolución en un plazo máximo de 24 horas hábiles.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Envío del Producto</h4>
+      <p>Empaqueta el producto de forma segura y envíalo por correo certificado a la dirección indicada. Los gastos de envío de devolución son <strong>gratuitos</strong> para pedidos dentro de España.</p>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Reembolso en 14 días</h4>
+      <p>Una vez recibido y verificado el producto, procesaremos el reembolso completo (incluidos los gastos de envío originales) en un plazo máximo de <strong>14 días naturales</strong>, usando el mismo método de pago original.</p>
+    </div>
+  </div>
+
+  <h2>5. Gastos de Devolución</h2>
+  <table>
+    <tr><th>País</th><th>Coste de devolución</th></tr>
+    <tr><td>España y Portugal</td><td><span class="badge-ok">Gratuito</span></td></tr>
+    <tr><td>Francia, Alemania, Italia</td><td>€5.99 (deducido del reembolso)</td></tr>
+    <tr><td>Países Bajos, Bélgica, Austria</td><td>€7.99 (deducido del reembolso)</td></tr>
+    <tr><td>Suiza, Liechtenstein, Dinamarca</td><td>€9.99 (deducido del reembolso)</td></tr>
+  </table>
+  <p><em>Los gastos de devolución son gratuitos si el producto llegó defectuoso o no corresponde al pedido.</em></p>
+
+  <h2>6. Plazos de Reembolso</h2>
+  <p>El reembolso se realizará en un máximo de <strong>14 días naturales</strong> desde la recepción del producto devuelto, utilizando el mismo medio de pago empleado en la compra:</p>
+  <ul>
+    <li><strong>Tarjeta de crédito/débito (Stripe):</strong> 5-10 días hábiles</li>
+    <li>El cargo en tu tarjeta aparecerá como cancelado por parte de Stripe</li>
+  </ul>
+
+  <h2>7. Productos Defectuosos o Incorrectos</h2>
+  <p>Si el producto recibido es defectuoso, está dañado durante el transporte, o no corresponde al pedido:</p>
+  <ul>
+    <li>Contacta con nosotros en <strong>info@patahogar.com</strong> adjuntando fotos del defecto</li>
+    <li>Correremos con todos los gastos de recogida y reenvío</li>
+    <li>Podrás elegir entre reembolso completo, sustitución del producto o vale de compra</li>
+  </ul>
+
+  <h2>8. Garantía Legal (2 años)</h2>
+  <p>Todos los productos vendidos en PataHogar cuentan con la <strong>garantía legal de 2 años</strong> según la Directiva Europea 2019/771 sobre conformidad de los bienes. En caso de defecto de conformidad, tienes derecho a:</p>
+  <ul>
+    <li>Reparación o sustitución del producto (gratuita)</li>
+    <li>Reducción proporcional del precio</li>
+    <li>Resolución del contrato (devolución total)</li>
+  </ul>
+
+  <div class="warning-box">
+    <h3>⚠️ Excepciones al Derecho de Desistimiento</h3>
+    <p>De acuerdo con el artículo 103 del Real Decreto Legislativo 1/2007, el derecho de desistimiento no aplica a:</p>
+    <ul>
+      <li>Productos personalizados o hechos a medida</li>
+      <li>Productos que puedan deteriorarse o caducar rápidamente</li>
+      <li>Productos sellados que no puedan devolverse por razones de higiene (abiertos)</li>
+      <li>Contenido digital que ya se ha descargado/reproducido con consentimiento</li>
+    </ul>
+  </div>
+
+  <h2>9. Formulario de Desistimiento</h2>
+  <p>Puedes usar el siguiente formulario tipo para ejercer tu derecho de desistimiento (enviar por email a info@patahogar.com):</p>
+  <div style="background:white;border:1px solid #ddd;border-radius:8px;padding:20px;font-family:monospace;font-size:0.88rem;line-height:1.8">
+    A/A: PataHogar — info@patahogar.com<br>
+    <br>
+    Por la presente le comunico que desisto del contrato de compra del siguiente producto:<br>
+    <br>
+    — Producto/Pedido nº: [NÚMERO DE PEDIDO]<br>
+    — Recibido el: [FECHA DE RECEPCIÓN]<br>
+    — Nombre del consumidor: [TU NOMBRE COMPLETO]<br>
+    — Domicilio: [TU DIRECCIÓN]<br>
+    — Firma (si se presenta en papel): ___________<br>
+    — Fecha: [FECHA]
+  </div>
+
+  <h2>10. Contacto para Devoluciones</h2>
+  <ul>
+    <li>📧 Email: <a href="mailto:info@patahogar.com">info@patahogar.com</a></li>
+    <li>💬 WhatsApp: disponible en la web</li>
+    <li>🌐 Web: <a href="https://patahogar.com">patahogar.com</a></li>
+    <li>⏱️ Tiempo de respuesta: máximo 24 horas hábiles</li>
+  </ul>
+
+</div>
+""" + footer + "\n" + scripts + """
 </body>
 </html>"""
     return HTMLResponse(content=html)
