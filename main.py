@@ -2418,6 +2418,127 @@ async def reset_proposed():
     """مسح سجل المنتجات المقترحة — يسمح باقتراحها مجدداً."""
     return await marketing_manager.reset_proposed_tracker()
 
+@app.get("/api/marketing/diagnose-meta")
+async def diagnose_meta():
+    """
+    Diagnóstico completo de Meta Ads:
+    - Estado real de cada campaña/adset/ad en Meta API
+    - Billing / método de pago
+    - Pixel status
+    - Delivery info y policy violations
+    """
+    import httpx
+    token   = os.getenv("META_ACCESS_TOKEN", "")
+    account = os.getenv("META_AD_ACCOUNT_ID", "")
+    pixel   = os.getenv("META_PIXEL_ID", "")
+    base    = "https://graph.facebook.com/v21.0"
+
+    if not token or not account:
+        return {"error": "META_ACCESS_TOKEN or META_AD_ACCOUNT_ID not set"}
+
+    result = {"account_id": account, "pixel_id": pixel, "checks": {}}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+
+        # 1. Account info + billing
+        r = await client.get(f"{base}/{account}",
+            params={"access_token": token,
+                    "fields": "name,account_status,disable_reason,funding_source_details,"
+                              "amount_spent,balance,currency,timezone_name,"
+                              "spend_cap,daily_spend_limit"})
+        acct = r.json()
+        # account_status: 1=Active, 2=Disabled, 3=Unsettled, 7=PendingReview, 9=InGracePeriod
+        status_map = {1:"✅ Active", 2:"❌ Disabled", 3:"⚠️ Unsettled (billing)", 7:"🔄 Pending Review", 9:"⚠️ In Grace Period"}
+        acct_status = acct.get("account_status", 0)
+        result["checks"]["account"] = {
+            "name":           acct.get("name"),
+            "status":         status_map.get(acct_status, f"Unknown ({acct_status})"),
+            "status_code":    acct_status,
+            "disable_reason": acct.get("disable_reason", "none"),
+            "currency":       acct.get("currency"),
+            "timezone":       acct.get("timezone_name"),
+            "amount_spent":   f"${float(acct.get('amount_spent',0))/100:.2f}",
+            "balance":        acct.get("balance"),
+            "funding_source": acct.get("funding_source_details", {}).get("display_string", "⚠️ No payment method"),
+            "raw":            acct
+        }
+
+        # 2. All ads in account with delivery info
+        r = await client.get(f"{base}/{account}/ads",
+            params={"access_token": token,
+                    "fields": "name,status,effective_status,configured_status,"
+                              "delivery_info,adset_id,campaign_id,creative",
+                    "limit": 20})
+        ads_data = r.json()
+        result["checks"]["meta_ads"] = ads_data.get("data", [])
+        result["checks"]["meta_ads_count"] = len(ads_data.get("data", []))
+
+        # 3. All campaigns
+        r = await client.get(f"{base}/{account}/campaigns",
+            params={"access_token": token,
+                    "fields": "name,status,effective_status,objective,daily_budget,lifetime_budget",
+                    "limit": 20})
+        result["checks"]["meta_campaigns"] = r.json().get("data", [])
+
+        # 4. All adsets
+        r = await client.get(f"{base}/{account}/adsets",
+            params={"access_token": token,
+                    "fields": "name,status,effective_status,delivery_info,"
+                              "daily_budget,bid_strategy,targeting,campaign_id",
+                    "limit": 20})
+        adsets = r.json().get("data", [])
+        result["checks"]["meta_adsets"] = adsets
+        result["checks"]["meta_adsets_count"] = len(adsets)
+
+        # 5. Check each active ad's campaign in detail
+        patabot_active = marketing_manager.active_ads
+        campaign_checks = []
+        for ad in patabot_active:
+            cid = ad.get("meta_campaign_id")
+            if cid:
+                rc = await client.get(f"{base}/{cid}",
+                    params={"access_token": token,
+                            "fields": "name,status,effective_status,issues_info"})
+                campaign_checks.append({
+                    "patabot_id":   ad.get("id"),
+                    "product":      ad.get("product_name"),
+                    "campaign_id":  cid,
+                    "meta_ad_id":   ad.get("meta_ad_id"),
+                    "meta_adset_id": ad.get("meta_adset_id"),
+                    "meta_adsets":  ad.get("meta_adsets", []),
+                    "meta_status":  rc.json()
+                })
+        result["checks"]["patabot_active_campaigns"] = campaign_checks
+
+        # 6. Pixel status
+        if pixel:
+            rp = await client.get(f"{base}/{pixel}",
+                params={"access_token": token,
+                        "fields": "name,is_unavailable,last_fired_time,data_use_setting"})
+            result["checks"]["pixel"] = rp.json()
+
+        # 7. Any account-level issues
+        ri = await client.get(f"{base}/{account}/adspixels",
+            params={"access_token": token, "fields": "name,last_fired_time", "limit": 5})
+        result["checks"]["pixels_on_account"] = ri.json().get("data", [])
+
+    # Summary diagnosis
+    acct_ok   = acct_status == 1
+    has_funds = "No payment method" not in result["checks"]["account"].get("funding_source","")
+    ads_count = result["checks"]["meta_ads_count"]
+    result["diagnosis"] = {
+        "account_healthy":    acct_ok,
+        "has_payment_method": has_funds,
+        "real_ads_on_meta":   ads_count,
+        "summary": (
+            "✅ Account OK — ads should deliver" if (acct_ok and has_funds and ads_count > 0)
+            else "❌ No real ads found on Meta" if ads_count == 0
+            else "⚠️ Account issue — check account status and billing"
+        )
+    }
+    return result
+
+
 @app.get("/api/marketing/test-tiktok")
 async def test_tiktok():
     """اختبار اتصال TikTok Ads API."""
