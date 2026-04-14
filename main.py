@@ -2572,60 +2572,114 @@ async def diagnose_meta():
 @app.get("/api/marketing/repair-ad-objects")
 async def repair_ad_objects():
     """
-    إصلاح الإعلانات النشطة التي لديها campaign+adset على Meta لكن meta_ad_id=null.
-    لا ينشئ campaigns أو adsets جديدة — فقط يكمل خطوة Ad Object الناقصة.
-    يجب أن يكون الحساب لديه payment method مُضاف أولاً.
+    Repair active ads missing meta_ad_id AND/OR meta_creative_id.
+    For each broken ad: recreate missing creative → create missing ad object.
+    Uses existing campaign+adset — does NOT create new campaigns or adsets.
     """
     import httpx
-    token   = os.getenv("META_ACCESS_TOKEN", "")
-    account = os.getenv("META_AD_ACCOUNT_ID", "")
-    base    = "https://graph.facebook.com/v21.0"
-    results = []
+    token    = os.getenv("META_ACCESS_TOKEN", "")
+    account  = os.getenv("META_AD_ACCOUNT_ID", "")
+    page_id  = os.getenv("META_PAGE_ID", "")
+    base     = "https://graph.facebook.com/v21.0"
+    results  = []
+
+    if not token or not account:
+        return {"error": "META_ACCESS_TOKEN or META_AD_ACCOUNT_ID missing"}
+    if not page_id:
+        return {"error": "META_PAGE_ID missing — required to create creatives"}
 
     for ad in marketing_manager.active_ads:
-        if ad.get("meta_ad_id"):
-            results.append({"id": ad["id"], "product": ad["product_name"],
-                            "status": "skipped — meta_ad_id already exists", "ad_id": ad["meta_ad_id"]})
+        entry = {"id": ad["id"], "product": ad["product_name"], "steps": []}
+
+        # Already fully repaired
+        if ad.get("meta_ad_id") and ad.get("meta_creative_id"):
+            entry["status"] = "skipped — already complete"
+            results.append(entry)
             continue
 
-        adset_id   = ad.get("meta_adset_id")
-        creative_id = ad.get("meta_creative_id")
-
-        if not adset_id or not creative_id:
-            results.append({"id": ad["id"], "product": ad["product_name"],
-                            "status": "error — missing adset_id or creative_id",
-                            "adset_id": adset_id, "creative_id": creative_id})
+        adset_id = ad.get("meta_adset_id")
+        if not adset_id:
+            entry["status"] = "error — no meta_adset_id stored"
+            results.append(entry)
             continue
 
-        # Create only the missing Ad Object
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(
+        async with httpx.AsyncClient(timeout=25.0) as client:
+
+            # ── Step A: Create Creative if missing ──
+            creative_id = ad.get("meta_creative_id")
+            if not creative_id:
+                pid = ad.get("product_id", "")
+                product_url = (f"https://patabot-production.up.railway.app/product/{pid}"
+                               if pid else "https://patahogar.com")
+                creative_payload = {
+                    "name": f"Creative — {ad['product_name'][:40]}",
+                    "object_story_spec": {
+                        "page_id": page_id,
+                        "link_data": {
+                            "link":    product_url,
+                            "message": ad.get("body", ""),
+                            "name":    ad.get("headline", ad["product_name"])[:35],
+                            "call_to_action": {"type": "SHOP_NOW", "value": {"link": product_url}},
+                        }
+                    }
+                }
+                if ad.get("product_image"):
+                    creative_payload["object_story_spec"]["link_data"]["picture"] = ad["product_image"]
+
+                rc = await client.post(
+                    f"{base}/{account}/adcreatives",
+                    params={"access_token": token},
+                    json=creative_payload
+                )
+                rc_json = rc.json()
+                if rc.status_code == 200 and rc_json.get("id"):
+                    creative_id = rc_json["id"]
+                    ad["meta_creative_id"] = creative_id
+                    entry["steps"].append(f"✅ Creative created: {creative_id}")
+                    logger.info(f"Repair: creative {creative_id} for {ad['id']}")
+                else:
+                    entry["steps"].append(f"❌ Creative failed: {rc_json.get('error', rc_json)}")
+                    entry["status"] = "failed — creative creation error"
+                    results.append(entry)
+                    continue
+                await asyncio.sleep(0.5)
+
+            # ── Step B: Create Ad Object ──
+            ra = await client.post(
                 f"{base}/{account}/ads",
                 params={"access_token": token},
                 json={
-                    "name":     (ad.get("headline", ad["product_name"]))[:40],
+                    "name":     ad.get("headline", ad["product_name"])[:40],
                     "adset_id": adset_id,
                     "creative": {"creative_id": creative_id},
                     "status":   "ACTIVE"
                 }
             )
-        resp = r.json()
-        if r.status_code == 200 and resp.get("id"):
-            ad["meta_ad_id"] = resp["id"]
-            marketing_manager._save_ads()
-            results.append({"id": ad["id"], "product": ad["product_name"],
-                            "status": "✅ Ad object created", "meta_ad_id": resp["id"]})
-            logger.info(f"Repaired ad {ad['id']}: meta_ad_id={resp['id']}")
-        else:
-            results.append({"id": ad["id"], "product": ad["product_name"],
-                            "status": "❌ Failed", "error": resp.get("error", resp)})
+            ra_json = ra.json()
+            if ra.status_code == 200 and ra_json.get("id"):
+                ad["meta_ad_id"] = ra_json["id"]
+                marketing_manager._save_ads()
+                entry["steps"].append(f"✅ Ad object created: {ra_json['id']}")
+                entry["status"] = "✅ fully repaired"
+                entry["meta_ad_id"] = ra_json["id"]
+                entry["meta_creative_id"] = creative_id
+                logger.info(f"Repair complete {ad['id']}: ad_id={ra_json['id']}")
+            else:
+                entry["steps"].append(f"❌ Ad creation failed: {ra_json.get('error', ra_json)}")
+                entry["status"] = "failed — ad creation error"
 
-    fixed = sum(1 for r in results if "✅" in r.get("status", ""))
+        results.append(entry)
+
+    fixed = sum(1 for r in results if "✅ fully repaired" in r.get("status", ""))
     return {
         "repaired": fixed,
         "total_active": len(marketing_manager.active_ads),
         "results": results,
-        "next": "Run /api/marketing/diagnose-meta to verify ads are now delivering" if fixed > 0 else "Check errors above"
+        "next": (
+            "✅ Visit /api/marketing/diagnose-meta to confirm delivery"
+            if fixed > 0 else
+            "❌ Check errors above. Most likely: wrong META_PAGE_ID or no payment method on account"
+        )
     }
 
 
