@@ -1,5 +1,5 @@
 """
-PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.6.0
+PataBot — الوكيل الذكي الشامل لـ PataHogar.com v1.6.1
 - Schedule: midnight fetch (00:00) — enrichment done before morning visitors
 - Catalog: only shows products with images (visitors never see incomplete products)
 - Stripe Checkout: Phase 3
